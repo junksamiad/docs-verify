@@ -24,22 +24,34 @@
                     </label>
                 </div>
 
-                <div class="options-area">
-                    <label for="detail-select">Image Detail Level:</label>
-                    <select id="detail-select" name="detail">
-                        <option value="auto" selected>Auto</option>
-                        <option value="low">Low</option>
-                        <option value="high">High</option>
-                    </select>
+                <div class="form-options-group">
+                    <div class="form-group">
+                        <label for="detailLevel">Image Detail Level (for OpenAI):</label>
+                        <select id="detailLevel" name="detailLevel">
+                            <option value="auto" selected>Auto</option>
+                            <option value="low">Low</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="aiProvider">AI Provider:</label>
+                        <select id="aiProvider" name="aiProvider">
+                            <option value="openai" selected>OpenAI (GPT-4o)</option>
+                            <option value="gemini">Google Gemini (1.5 Flash)</option>
+                        </select>
+                    </div>
                 </div>
 
-                <button type="submit" id="submit-button">Classify Document</button>
-                <button type="button" id="reset-button" class="secondary-button">Start New Classification</button>
+                <div class="button-group">
+                    <button type="submit" id="submitBtn">Classify Document</button>
+                    <button type="button" id="resetButton" class="secondary-button">Start New Classification</button>
+                </div>
             </form>
 
             <div id="result-area" class="result-area" style="display: none;">
                 <h2>Classification Result:</h2>
-                <p id="result-text"></p>
+                <div id="classificationResult"></div>
             </div>
 
             <div id="error-area" class="error-area" style="display: none;">
@@ -59,12 +71,16 @@
         const fileNameDisplay = document.getElementById('file-name-display');
         const uploadForm = document.getElementById('upload-form');
         const resultArea = document.getElementById('result-area');
-        const resultText = document.getElementById('result-text');
+        const resultText = document.getElementById('classificationResult');
         const errorArea = document.getElementById('error-area');
         const errorText = document.getElementById('error-text');
-        const submitButton = document.getElementById('submit-button');
-        const detailSelect = document.getElementById('detail-select');
-        const resetButton = document.getElementById('reset-button');
+        const submitButton = document.getElementById('submitBtn');
+        const detailSelect = document.getElementById('detailLevel');
+        const resetButton = document.getElementById('resetButton');
+        const aiProviderSelect = document.getElementById('aiProvider');
+
+        // Disable submit button initially
+        submitButton.disabled = true;
 
         // Handle drag and drop
         uploadArea.addEventListener('dragover', (event) => {
@@ -84,6 +100,7 @@
                 fileInput.files = files;
                 fileNameDisplay.textContent = files[0].name;
                 fileNameDisplay.style.display = 'block';
+                submitButton.disabled = false; // Enable submit button
             }
         });
 
@@ -91,6 +108,11 @@
             if (fileInput.files.length > 0) {
                 fileNameDisplay.textContent = fileInput.files[0].name;
                 fileNameDisplay.style.display = 'block';
+                submitButton.disabled = false; // Enable submit button
+            } else {
+                fileNameDisplay.textContent = 'No file selected';
+                // fileNameDisplay.style.display = 'none'; // Or keep it visible with 'No file selected'
+                submitButton.disabled = true; // Disable if no file
             }
         });
 
@@ -102,26 +124,28 @@
             submitButton.textContent = 'Classifying...';
 
             const formData = new FormData();
-            const selectedFile = fileInput.files[0];
+            const file = fileInput.files[0];
+            const detailLevel = document.getElementById('detailLevel').value;
+            const aiProvider = document.getElementById('aiProvider').value;
 
             // --- START: Frontend File Type Validation ---
-            if (selectedFile) {
+            if (file) {
                 const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'image/heic', 'image/heif'];
                 const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i, /'.pdf$'/i, /'.heic$'/i, /'.heif$'/i];
                 
-                let isValidType = allowedTypes.includes(selectedFile.type);
-                let isValidExtension = allowedExtensions.some(ext => ext.test(selectedFile.name));
+                let isValidType = allowedTypes.includes(file.type);
+                let isValidExtension = allowedExtensions.some(ext => ext.test(file.name));
 
                 // Prioritize MIME type, but use extension as a fallback if MIME type is generic (e.g., application/octet-stream for some uploads)
-                if (!isValidType && selectedFile.type === 'application/octet-stream') {
+                if (!isValidType && file.type === 'application/octet-stream') {
                     isValidType = isValidExtension; 
                 }
-                else if (!isValidType && !selectedFile.type) { // if type is empty, rely on extension
+                else if (!isValidType && !file.type) { // if type is empty, rely on extension
                     isValidType = isValidExtension;
                 }
 
                 if (!isValidType && !isValidExtension) { // If neither is valid, reject
-                    errorText.textContent = `Invalid file type: ${selectedFile.name}. Please upload a JPG, PNG, GIF, WEBP, PDF, HEIC or HEIF file.`;
+                    errorText.textContent = `Invalid file type: ${file.name}. Please upload a JPG, PNG, GIF, WEBP, PDF, HEIC or HEIF file.`;
                     errorArea.style.display = 'block';
                     submitButton.disabled = false;
                     submitButton.textContent = 'Classify Document';
@@ -136,8 +160,9 @@
             }
             // --- END: Frontend File Type Validation ---
 
-            formData.append('file', selectedFile);
-            formData.append('detail', detailSelect.value);
+            formData.append('file', file);
+            formData.append('detail', detailLevel);
+            formData.append('ai_provider', aiProvider);
 
             try {
                 const response = await fetch('/upload', {
@@ -148,7 +173,13 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    resultText.textContent = `File: ${data.filename} - Classified as: ${data.document_type} (Detail: ${data.detail_used})`;
+                    let resultHTML = `<p><strong>File:</strong> ${data.filename}</p>`;
+                    resultHTML += `<p><strong>Classified as:</strong> ${data.document_type}</p>`;
+                    resultHTML += `<p><strong>AI Provider:</strong> ${data.ai_provider}</p>`;
+                    if (data.ai_provider === 'openai') {
+                        resultHTML += `<p><strong>Detail Level Used:</strong> ${data.detail_used}</p>`;
+                    }
+                    resultText.innerHTML = resultHTML;
                     resultArea.style.display = 'block';
                 } else {
                     let errorMessage = data.error || `HTTP error! Status: ${response.status}`;
@@ -163,26 +194,33 @@
                 errorArea.style.display = 'block';
             }
             finally {
-                submitButton.disabled = false;
+                submitButton.disabled = false; // Re-enable after attempt, but file is now cleared by reset button typically
                 submitButton.textContent = 'Classify Document';
             }
         });
 
-        // Handle Reset Button Click
-        resetButton.addEventListener('click', () => {
-            uploadForm.reset();
-            fileNameDisplay.textContent = '';
-            fileNameDisplay.style.display = 'none';
+        // Function to reset the form
+        function resetForm() {
+            uploadForm.reset(); // Resets form fields to their initial values
+            fileInput.value = ''; // Clear the file input explicitly
+            fileNameDisplay.textContent = 'No file selected';
+            fileNameDisplay.style.color = '#aaa';
+            uploadArea.classList.remove('dragging');
+            submitButton.disabled = true; // Disable submit button on reset
+            submitButton.textContent = 'Classify Document';
+            detailSelect.value = 'auto'; // Reset detail level
+            aiProviderSelect.value = 'openai'; // Reset AI provider
             resultArea.style.display = 'none';
-            resultText.textContent = '';
+            resultText.innerHTML = ''; // Clear previous results
             errorArea.style.display = 'none';
             errorText.textContent = '';
-            detailSelect.value = 'auto';
-            uploadArea.classList.remove('dragging');
+            console.log("Form reset");
+        }
 
-            submitButton.disabled = false;
-            submitButton.textContent = 'Classify Document';
-        });
+        // Event listener for the reset button
+        if(resetButton) {
+            resetButton.addEventListener('click', resetForm);
+        }
     </script>
 </body>
 </html> 
