@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Classifier</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Document Image Classifier</h1>
+            <p>Upload an image of a document to classify its type.</p>
+        </header>
+
+        <main>
+            <form id="upload-form" enctype="multipart/form-data">
+                <div class="upload-area" id="upload-area">
+                    <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif" required>
+                    <label for="file-input" class="upload-label">
+                        <img src="{{ url_for('static', filename='upload_icon.svg') }}" alt="Upload Icon" class="upload-icon">
+                        <p>Drag & drop an image here, or click to select</p>
+                        <span id="file-name-display"></span>
+                    </label>
+                </div>
+
+                <div class="options-area">
+                    <label for="detail-select">Image Detail Level:</label>
+                    <select id="detail-select" name="detail">
+                        <option value="auto" selected>Auto</option>
+                        <option value="low">Low</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+
+                <button type="submit" id="submit-button">Classify Document</button>
+                <button type="button" id="reset-button" class="secondary-button">Start New Classification</button>
+            </form>
+
+            <div id="result-area" class="result-area" style="display: none;">
+                <h2>Classification Result:</h2>
+                <p id="result-text"></p>
+            </div>
+
+            <div id="error-area" class="error-area" style="display: none;">
+                <h2>Error:</h2>
+                <p id="error-text"></p>
+            </div>
+        </main>
+
+        <footer>
+            <p>&copy; 2024 AI Document Services</p>
+        </footer>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const uploadForm = document.getElementById('upload-form');
+        const resultArea = document.getElementById('result-area');
+        const resultText = document.getElementById('result-text');
+        const errorArea = document.getElementById('error-area');
+        const errorText = document.getElementById('error-text');
+        const submitButton = document.getElementById('submit-button');
+        const detailSelect = document.getElementById('detail-select');
+        const resetButton = document.getElementById('reset-button');
+
+        // Handle drag and drop
+        uploadArea.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            uploadArea.classList.add('dragging');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragging');
+        });
+
+        uploadArea.addEventListener('drop', (event) => {
+            event.preventDefault();
+            uploadArea.classList.remove('dragging');
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                fileNameDisplay.textContent = files[0].name;
+                fileNameDisplay.style.display = 'block';
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                fileNameDisplay.textContent = fileInput.files[0].name;
+                fileNameDisplay.style.display = 'block';
+            }
+        });
+
+        uploadForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            resultArea.style.display = 'none';
+            errorArea.style.display = 'none';
+            submitButton.disabled = true;
+            submitButton.textContent = 'Classifying...';
+
+            const formData = new FormData();
+            const selectedFile = fileInput.files[0];
+
+            // --- START: Frontend File Type Validation ---
+            if (selectedFile) {
+                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i];
+                
+                let isValidType = allowedTypes.includes(selectedFile.type);
+                let isValidExtension = allowedExtensions.some(ext => ext.test(selectedFile.name));
+
+                // Prioritize MIME type, but use extension as a fallback if MIME type is generic (e.g., application/octet-stream for some uploads)
+                if (!isValidType && selectedFile.type === 'application/octet-stream') {
+                    isValidType = isValidExtension; 
+                }
+                else if (!isValidType && !selectedFile.type) { // if type is empty, rely on extension
+                    isValidType = isValidExtension;
+                }
+
+                if (!isValidType && !isValidExtension) { // If neither is valid, reject
+                    errorText.textContent = `Invalid file type: ${selectedFile.name}. Please upload a JPG, PNG, GIF, or WEBP image.`;
+                    errorArea.style.display = 'block';
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Classify Document';
+                    return; // Stop submission
+                }
+            } else {
+                errorText.textContent = 'No file selected.';
+                errorArea.style.display = 'block';
+                submitButton.disabled = false;
+                submitButton.textContent = 'Classify Document';
+                return; // Stop submission
+            }
+            // --- END: Frontend File Type Validation ---
+
+            formData.append('file', selectedFile);
+            formData.append('detail', detailSelect.value);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    resultText.textContent = `File: ${data.filename} - Classified as: ${data.document_type} (Detail: ${data.detail_used})`;
+                    resultArea.style.display = 'block';
+                } else {
+                    let errorMessage = data.error || `HTTP error! Status: ${response.status}`;
+                    if (data.status_code) {
+                        errorMessage += ` (Code: ${data.status_code})`;
+                    }
+                    errorText.textContent = errorMessage;
+                    errorArea.style.display = 'block';
+                }
+            } catch (error) {
+                errorText.textContent = `Request failed: ${error.message}`;
+                errorArea.style.display = 'block';
+            }
+            finally {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Classify Document';
+            }
+        });
+
+        // Handle Reset Button Click
+        resetButton.addEventListener('click', () => {
+            uploadForm.reset();
+            fileNameDisplay.textContent = '';
+            fileNameDisplay.style.display = 'none';
+            resultArea.style.display = 'none';
+            resultText.textContent = '';
+            errorArea.style.display = 'none';
+            errorText.textContent = '';
+            detailSelect.value = 'auto';
+            uploadArea.classList.remove('dragging');
+
+            submitButton.disabled = false;
+            submitButton.textContent = 'Classify Document';
+        });
+    </script>
+</body>
+</html> 
