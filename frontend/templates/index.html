@@ -16,7 +16,7 @@
         <main>
             <form id="upload-form" enctype="multipart/form-data">
                 <div class="upload-area" id="upload-area">
-                    <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif" required>
+                    <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif" required>
                     <label for="file-input" class="upload-label">
                         <img src="{{ url_for('static', filename='upload_icon.svg') }}" alt="Upload Icon" class="upload-icon">
                         <p>Drag & drop an image here, or click to select</p>
@@ -106,8 +106,8 @@
 
             // --- START: Frontend File Type Validation ---
             if (selectedFile) {
-                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i];
+                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'image/heic', 'image/heif'];
+                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i, /'.pdf$'/i, /'.heic$'/i, /'.heif$'/i];
                 
                 let isValidType = allowedTypes.includes(selectedFile.type);
                 let isValidExtension = allowedExtensions.some(ext => ext.test(selectedFile.name));
@@ -121,7 +121,7 @@
                 }
 
                 if (!isValidType && !isValidExtension) { // If neither is valid, reject
-                    errorText.textContent = `Invalid file type: ${selectedFile.name}. Please upload a JPG, PNG, GIF, or WEBP image.`;
+                    errorText.textContent = `Invalid file type: ${selectedFile.name}. Please upload a JPG, PNG, GIF, WEBP, PDF, HEIC or HEIF file.`;
                     errorArea.style.display = 'block';
                     submitButton.disabled = false;
                     submitButton.textContent = 'Classify Document';

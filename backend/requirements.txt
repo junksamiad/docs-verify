@@ -2,3 +2,6 @@ fastapi
 uvicorn
 openai
 python-multipart
+Pillow
+pdf2image
+Pillow-HEIF

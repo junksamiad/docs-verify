@@ -26,14 +26,24 @@ async def classify_image_endpoint(file: UploadFile = File(...), detail: str = Fo
     temp_file_path = os.path.join(UPLOAD_DIR, file.filename)
 
     # --- START: File Type Validation ---
-    allowed_mime_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+    allowed_mime_types = [
+        "image/jpeg", "image/png", "image/gif", "image/webp",
+        "application/pdf", 
+        "image/heic", "image/heif" # Common MIME types for HEIC/HEIF
+    ]
+    # Add more HEIC/HEIF variants if needed, e.g., from a comprehensive list
+    
+    print(f"[SERVER LOG] Received file: '{file.filename}' with content type: '{file.content_type}'") # Log received content type
+
     if file.content_type not in allowed_mime_types:
-        # You could also check file.filename extension as a fallback or primary method
-        # e.g., if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid file type: {file.content_type}. Please upload a valid image (JPEG, PNG, GIF, WEBP)."
-        )
+        # Fallback check for extensions if MIME type is generic or not in the precise list
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if not ( (file.content_type == "application/octet-stream" or not file.content_type) and 
+                   file_ext in [".pdf", ".heic", ".heif", ".png", ".jpg", ".jpeg", ".gif", ".webp"] ):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file type: '{file.content_type if file.content_type else file_ext}'. Please upload a valid image (JPEG, PNG, GIF, WEBP), PDF, or HEIC/HEIF file."
+            )
     # --- END: File Type Validation ---
 
     try:
@@ -48,6 +58,7 @@ async def classify_image_endpoint(file: UploadFile = File(...), detail: str = Fo
         # Call the classification agent
         classification_result = classify_image_document_type(
             image_path=temp_file_path,
+            original_file_mime_type=file.content_type, # Pass the original MIME type
             document_types=POSSIBLE_DOC_TYPES,
             detail=detail
         )
