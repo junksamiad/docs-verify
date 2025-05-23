@@ -5,11 +5,31 @@ import os
 app = Flask(__name__)
 
 # Configuration
-FASTAPI_BACKEND_URL = os.environ.get("FASTAPI_BACKEND_URL", "http://127.0.0.1:8000/classify-image/")
+FASTAPI_BACKEND_URL_CLASSIFY = os.environ.get("FASTAPI_BACKEND_URL_CLASSIFY", "http://127.0.0.1:8000/classify-image/")
+FASTAPI_BACKEND_URL_CONFIG = os.environ.get("FASTAPI_BACKEND_URL_MODELS", "http://127.0.0.1:8000/get-model-display-names")
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    model_names = {
+        "openai": "OpenAI (Default)", # Default/fallback names
+        "gemini": "Google Gemini (Default)"
+    }
+    possible_doc_types = [] # Default empty list
+    try:
+        response = requests.get(FASTAPI_BACKEND_URL_CONFIG, timeout=5)
+        response.raise_for_status()
+        config_data = response.json()
+        
+        model_names["openai"] = config_data.get("openai_model_name", model_names["openai"])
+        model_names["gemini"] = config_data.get("gemini_model_name", model_names["gemini"])
+        possible_doc_types = config_data.get("possible_doc_types", []) # Get doc types
+        
+        print(f"Fetched model names: {model_names}")
+        print(f"Fetched doc types: {possible_doc_types}")
+    except requests.exceptions.RequestException as e:
+        print(f"Could not fetch config from backend: {e}. Using defaults.")
+    # Pass the model names (fetched or default) to the template
+    return render_template('index.html', model_names=model_names, possible_doc_types=possible_doc_types)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -32,8 +52,8 @@ def upload_file():
         
         try:
             print(f"Forwarding to backend. Detail: {detail}, AI Provider: {ai_provider}, File: {file.filename}")
-            response = requests.post(FASTAPI_BACKEND_URL, files=files, data=payload, timeout=180) # Increased timeout
-            response.raise_for_status() # Raises an HTTPError for bad responses (4XX or 5XX)
+            response = requests.post(FASTAPI_BACKEND_URL_CLASSIFY, files=files, data=payload, timeout=180) # Use specific URL for classification
+            response.raise_for_status()
             
             # Assuming the backend returns JSON with 'document_type' and 'filename'
             return jsonify(response.json()), response.status_code

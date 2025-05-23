@@ -3,6 +3,11 @@ import os
 import json
 from PIL import Image # For reading image dimensions if needed, and basic ops
 
+# --- Model Configuration ---
+GEMINI_MODEL_ID = 'gemini-2.0-flash'  # The actual model ID used for the API call
+GEMINI_FRIENDLY_NAME = f"Google Gemini ({GEMINI_MODEL_ID})" # Display name for the UI
+# --- End Model Configuration ---
+
 # Ensure your GOOGLE_API_KEY environment variable is set.
 # You can set it using: export GOOGLE_API_KEY='your_gemini_api_key'
 # genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
@@ -69,29 +74,39 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
         # Using a model that supports vision. gemini-1.5-flash is a good general choice.
         # The google_images.md doc refers to `gemini-2.0-flash` but that might be newer/experimental.
         # Let's use `gemini-1.5-flash` which is widely available and good for vision.
-        model = genai.GenerativeModel('gemini-2.0-flash') 
+        model = genai.GenerativeModel(GEMINI_MODEL_ID) 
         
         # The contents should be a list [image_part, prompt] or [prompt, image_part]
         # Based on docs, text usually comes after the image for single image + text.
         response = model.generate_content([image_part, prompt])
         
-        print(f"[Gemini LOG] Raw response text: {response.text}")
+        raw_response_text = response.text
+        print(f"[Gemini LOG] Raw response text: {raw_response_text}")
+
+        # Attempt to strip markdown code fences if present
+        cleaned_response_text = raw_response_text.strip()
+        if cleaned_response_text.startswith("```json"):
+            cleaned_response_text = cleaned_response_text[len("```json"):].strip()
+        if cleaned_response_text.startswith("```"):
+            cleaned_response_text = cleaned_response_text[len("```"):].strip()
+        if cleaned_response_text.endswith("```"):
+            cleaned_response_text = cleaned_response_text[:-len("```")].strip()
 
         try:
             # The response.text should be the JSON string
-            parsed_json = json.loads(response.text.strip())
+            parsed_json = json.loads(cleaned_response_text)
             predicted_type = parsed_json.get("predicted_document_type")
 
             if predicted_type and predicted_type in document_types:
                 return predicted_type
             elif predicted_type:
-                print(f"Warning [Gemini]: Model returned a type '{predicted_type}' not in the allowed list: {document_types}. Raw JSON: {response.text}")
+                print(f"Warning [Gemini]: Model returned a type '{predicted_type}' not in the allowed list: {document_types}. Raw JSON: {raw_response_text}")
                 return None
             else:
-                print(f"Error [Gemini]: 'predicted_document_type' key missing in JSON response: {response.text}")
+                print(f"Error [Gemini]: 'predicted_document_type' key missing in JSON response: {raw_response_text}")
                 return None
         except json.JSONDecodeError as e:
-            print(f"Error [Gemini]: Decoding JSON response from API: {e}. Raw response: {response.text}")
+            print(f"Error [Gemini]: Decoding JSON response from API: {e}. Cleaned response: '{cleaned_response_text}'. Raw response: '{raw_response_text}'")
             return None
         except AttributeError:
             # This can happen if response.text is not available (e.g. safety blocks)

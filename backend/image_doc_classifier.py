@@ -6,6 +6,7 @@ import json
 from PIL import Image # For image operations
 from pdf2image import convert_from_path # For PDF conversion
 from pillow_heif import register_heif_opener # For HEIC support
+import io # For handling byte streams
 
 register_heif_opener() # Register HEIC opener with Pillow
 
@@ -18,6 +19,11 @@ client = OpenAI()
 # Define a directory for temporary converted files
 CONVERTED_TEMP_DIR = "temp_converted_images"
 os.makedirs(CONVERTED_TEMP_DIR, exist_ok=True)
+
+# --- Model Configuration ---
+OPENAI_MODEL_ID = 'gpt-4o-2024-08-06' # The actual model ID used for the API call
+OPENAI_FRIENDLY_NAME = f"OpenAI ({OPENAI_MODEL_ID})" # Display name for the UI
+# --- End Model Configuration ---
 
 def convert_to_png_if_needed(original_path: str, original_mime_type: str | None) -> tuple[str | None, str | None]:
     """
@@ -154,55 +160,58 @@ def classify_image_document_type(image_path: str, original_file_mime_type: str |
         f"You must respond with a JSON object that strictly adheres to the following schema: {json.dumps(output_schema)}. "
         f"The 'predicted_document_type' field in your JSON response must be one of these exact values: {', '.join(document_types)}."
     )
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text", 
+                    "text": prompt_text
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": base64_image, # base64_image already includes data:mime/type;base64,
+                        "detail": detail
+                    }
+                }
+            ]
+        }
+    ]
+
     api_response_text = None
     try:
-        response = client.responses.create(
-            model="gpt-4o-2024-08-06",
-            input=[
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "input_text", "text": prompt_text},
-                        {
-                            "type": "input_image",
-                            "image_url": base64_image,
-                            "detail": detail,
-                        },
-                    ],
-                }
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "document_classification_output",
-                    "schema": output_schema,
-                    "strict": True
-                }
-            }
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL_ID,
+            messages=messages,
+            temperature=0.2,
+            response_format={"type": "json_object"} # Correct way to request JSON output
         )
-        api_response_text = response.output_text # Store for potential logging
-
-        if response.output_text:
+        # The API response for json_object mode is typically in response.choices[0].message.content
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            api_response_text = response.choices[0].message.content
+            print(f"[OpenAI LOG] Raw JSON response content: {api_response_text}")
             try:
-                parsed_json = json.loads(response.output_text)
+                parsed_json = json.loads(api_response_text)
                 predicted_type = parsed_json.get("predicted_document_type")
 
                 if predicted_type and predicted_type in document_types:
                     return predicted_type
                 elif predicted_type:
-                    print(f"Warning: Model returned a type '{predicted_type}' not in the allowed list: {document_types}. Raw JSON: {response.output_text}")
+                    print(f"Warning: Model returned a type '{predicted_type}' not in the allowed list: {document_types}. Raw JSON: {api_response_text}")
                     return None 
                 else:
-                    print(f"Error: 'predicted_document_type' key missing in JSON response: {response.output_text}")
+                    print(f"Error: 'predicted_document_type' key missing in JSON response: {api_response_text}")
                     return None
             except json.JSONDecodeError as e:
-                print(f"Error decoding JSON response from API: {e}. Raw response: {response.output_text}")
+                print(f"Error [OpenAI]: Decoding JSON response from API: {e}. Raw response content: {api_response_text}")
                 return None
-        elif response.output and response.output[0].content and response.output[0].content[0].type == "refusal":
-             print(f"API refused the request: {response.output[0].content[0].refusal}")
-             return None
         else:
-            print(f"No output_text or refusal found in API response. Full response: {response}")
+            # ... (handle cases where response structure is not as expected, e.g., refusals or empty choices)
+            print(f"[OpenAI LOG] No valid content in API response. Full response: {response}")
+            # Check for refusals if possible, similar to how it might have been before or add more specific error logging.
+            # For example, if response.choices[0].finish_reason == 'content_filter'
             return None
 
     except Exception as e:

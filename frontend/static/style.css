@@ -18,26 +18,21 @@ body {
     color: var(--text-color);
     margin: 0;
     padding: 20px;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start; 
     min-height: 100vh;
     box-sizing: border-box;
     line-height: 1.6;
 }
 
-.container {
-    background-color: var(--tertiary-color);
-    padding: 30px 35px;
-    border-radius: var(--border-radius);
-    box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+.page-container {
     width: 100%;
-    max-width: 550px; /* Slightly adjusted for better form flow */
-    text-align: left; /* Change default text align for container */
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 20px;
+    box-sizing: border-box;
 }
 
 header {
-    text-align: center; /* Center header text only */
+    text-align: center;
     margin-bottom: 30px;
 }
 
@@ -49,23 +44,23 @@ header h1 {
 }
 
 header p {
-    color: #546E7A; /* Softer text color for subheading */
+    color: #546E7A;
     margin-bottom: 25px;
     font-size: 1em;
 }
 
-/* Form Styling */
 #upload-form {
     display: flex;
     flex-direction: column;
-    gap: 20px; /* Space between form elements */
+    gap: 20px;
+    flex-grow: 1;
 }
 
 .upload-area {
     border: 2px dashed var(--border-color);
     border-radius: var(--border-radius);
     padding: 25px;
-    background-color: #fafafa; /* Slightly off-white */
+    background-color: #fafafa;
     transition: background-color 0.2s ease, border-color 0.2s ease;
     position: relative;
     cursor: pointer;
@@ -104,14 +99,14 @@ header p {
 }
 
 #file-name-display {
-    display: block; /* Always block, content changes */
+    display: block;
     margin-top: 10px;
     font-style: normal;
     font-size: 0.9em;
     color: var(--primary-color);
     font-weight: 500;
-    text-align: center; /* Center file name */
-    min-height: 1.2em; /* Prevent layout shift */
+    text-align: center;
+    min-height: 1.2em;
 }
 
 .form-options-group {
@@ -147,7 +142,7 @@ select#aiProvider {
     background-color: var(--tertiary-color);
     color: var(--text-color);
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    appearance: none; /* Remove default arrow for custom one if desired later */
+    appearance: none;
     background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23333' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
     background-repeat: no-repeat;
     background-position: right 10px center;
@@ -161,11 +156,76 @@ select#aiProvider:focus {
     box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.2);
 }
 
+textarea#candidateProfileInfo {
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    font-family: var(--font-family);
+    font-size: 0.95em;
+    background-color: var(--tertiary-color);
+    color: var(--text-color);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 150px;
+    flex-grow: 1;
+}
+
+textarea#candidateProfileInfo:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.2);
+}
+
+.column-candidate-info .form-group {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.column-candidate-info .form-group textarea {
+    flex-grow: 1;
+}
+
+.doc-checklist {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+
+.doc-checklist li {
+    padding: 8px 0;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #eef0f2;
+}
+
+.doc-checklist li:last-child {
+    border-bottom: none;
+}
+
+.doc-checklist input[type="checkbox"] {
+    margin-right: 12px;
+    cursor: not-allowed;
+    accent-color: var(--primary-color);
+}
+
+.doc-checklist label {
+    font-size: 0.95em;
+    color: var(--text-color);
+}
+
+.column-classify .result-area,
+.column-classify .error-area {
+    margin-top: 20px;
+}
+
 .button-group {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    margin-top: 10px; /* Add space above buttons */
+    margin-top: 10px;
 }
 
 button#submitBtn,
@@ -187,7 +247,7 @@ button#submitBtn {
 }
 
 button#submitBtn:hover {
-    background-color: #256A2A; /* Slightly darker green */
+    background-color: #256A2A;
     box-shadow: var(--box-shadow-hover);
 }
 
@@ -196,7 +256,7 @@ button#submitBtn:active {
 }
 
 button#submitBtn:disabled {
-    background-color: #A5D6A7; /* Lighter green, disabled */
+    background-color: #A5D6A7;
     color: #607D8B;
     cursor: not-allowed;
     box-shadow: none;
@@ -209,7 +269,7 @@ button#resetButton {
 }
 
 button#resetButton:hover {
-    background-color: #e9ecef; /* Slightly darker grey */
+    background-color: #e9ecef;
     border-color: #B0BEC5;
     box-shadow: var(--box-shadow-hover);
 }
@@ -252,6 +312,23 @@ button#resetButton:active {
 
 .result-area p strong, .error-area p strong {
     font-weight: 600;
+    color: var(--text-color);
+}
+
+/* Styles for scrollable preformatted text within any result area */
+.result-area pre {
+    background-color: #e9ecef; /* Slightly different background for the pre block */
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 15px;
+    max-height: 400px; /* Set a max height - can be adjusted if needed */
+    overflow-y: auto;  /* Add vertical scrollbar if content exceeds max-height */
+    overflow-x: auto;  /* Add horizontal scrollbar if content exceeds width */
+    white-space: pre;  /* Keep whitespace, crucial for JSON formatting */
+    word-wrap: normal; /* Prevent wrapping of long lines, use horizontal scroll instead */
+    font-size: 0.85em; /* Slightly smaller font for dense JSON */
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
+    color: var(--text-color); /* Ensure preformatted text also uses the main text color */
 }
 
 footer {
@@ -261,4 +338,34 @@ footer {
     border-top: 1px solid var(--border-color);
     font-size: 0.85em;
     color: #78909C;
+}
+
+.main-content-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+    align-items: flex-start;
+}
+
+.grid-column {
+    background-color: var(--tertiary-color);
+    padding: 25px;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.grid-column h2 {
+    color: var(--primary-color);
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 1.4em;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 10px;
+}
+
+.grid-column.column-classify h2 {
 } 

@@ -7,58 +7,94 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <div class="container">
+    <div class="page-container">
         <header>
             <h1>Document Image Classifier</h1>
             <p>Upload an image of a document to classify its type.</p>
         </header>
 
-        <main>
-            <form id="upload-form" enctype="multipart/form-data">
-                <div class="upload-area" id="upload-area">
-                    <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif" required>
-                    <label for="file-input" class="upload-label">
-                        <img src="{{ url_for('static', filename='upload_icon.svg') }}" alt="Upload Icon" class="upload-icon">
-                        <p>Drag & drop an image here, or click to select</p>
-                        <span id="file-name-display"></span>
-                    </label>
-                </div>
-
-                <div class="form-options-group">
-                    <div class="form-group">
-                        <label for="detailLevel">Image Detail Level (for OpenAI):</label>
-                        <select id="detailLevel" name="detailLevel">
-                            <option value="auto" selected>Auto</option>
-                            <option value="low">Low</option>
-                            <option value="high">High</option>
-                        </select>
+        <div class="main-content-grid">
+            <!-- Column 1: Classification Controls -->
+            <div class="grid-column column-classify">
+                <h2>Classification</h2>
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="upload-area" id="upload-area">
+                        <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif" required>
+                        <label for="file-input" class="upload-label">
+                            <img src="{{ url_for('static', filename='upload_icon.svg') }}" alt="Upload Icon" class="upload-icon">
+                            <p>Drag & drop an image here, or click to select</p>
+                            <span id="file-name-display"></span>
+                        </label>
                     </div>
 
-                    <div class="form-group">
-                        <label for="aiProvider">AI Provider:</label>
-                        <select id="aiProvider" name="aiProvider">
-                            <option value="openai" selected>OpenAI (GPT-4o)</option>
-                            <option value="gemini">Google Gemini (1.5 Flash)</option>
-                        </select>
+                    <div class="form-options-group">
+                        <div class="form-group">
+                            <label for="detailLevel">Image Detail Level (for OpenAI):</label>
+                            <select id="detailLevel" name="detailLevel">
+                                <option value="auto" selected>Auto</option>
+                                <option value="low">Low</option>
+                                <option value="high">High</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="aiProvider">AI Provider:</label>
+                            <select id="aiProvider" name="aiProvider">
+                                <option value="openai" selected>{{ model_names.openai }}</option>
+                                <option value="gemini">{{ model_names.gemini }}</option>
+                            </select>
+                        </div>
                     </div>
-                </div>
 
-                <div class="button-group">
-                    <button type="submit" id="submitBtn">Classify Document</button>
-                    <button type="button" id="resetButton" class="secondary-button">Start New Classification</button>
-                </div>
-            </form>
+                    <div class="button-group">
+                        <button type="submit" id="submitBtn">Classify Document</button>
+                        <button type="button" id="resetButton" class="secondary-button">Start New Classification</button>
+                    </div>
+                </form>
 
-            <div id="result-area" class="result-area" style="display: none;">
-                <h2>Classification Result:</h2>
-                <div id="classificationResult"></div>
+                <div id="result-area" class="result-area" style="display: none;">
+                    <h3>Classification Result:</h3>
+                    <div id="classificationResult"></div>
+                </div>
+    
+                <div id="error-area" class="error-area" style="display: none;">
+                    <h3>Error:</h3>
+                    <p id="error-text"></p>
+                </div>
             </div>
 
-            <div id="error-area" class="error-area" style="display: none;">
-                <h2>Error:</h2>
-                <p id="error-text"></p>
+            <!-- Column 2: Candidate Profile Info -->
+            <div class="grid-column column-candidate-info">
+                <h2>Candidate Profile</h2>
+                <div class="form-group">
+                    <label for="candidateProfileInfo">Profile Information:</label>
+                    <textarea id="candidateProfileInfo" name="candidateProfileInfo" rows="10" placeholder="Enter any relevant candidate profile information here..."></textarea>
+                </div>
+
+                <!-- New area for passport analysis -->
+                <div id="passport-analysis-display-area" class="result-area" style="display: none; margin-top: 20px;">
+                    <h3>Passport Analysis Details:</h3>
+                    <div id="passportAnalysisContent"></div> <!-- Content will be injected here -->
+                </div>
             </div>
-        </main>
+
+            <!-- Column 3: Document Checklist -->
+            <div class="grid-column column-doc-checklist">
+                <h2>Document Checklist</h2>
+                <ul class="doc-checklist">
+                    {% if possible_doc_types %}
+                        {% for doc_type in possible_doc_types %}
+                            <li>
+                                <input type="checkbox" id="doc-{{ loop.index }}" name="doc-{{ loop.index }}" value="{{ doc_type }}" disabled>
+                                <label for="doc-{{ loop.index }}">{{ doc_type }}</label>
+                            </li>
+                        {% endfor %}
+                    {% else %}
+                        <li>No document types loaded.</li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
 
         <footer>
             <p>&copy; 2024 AI Document Services</p>
@@ -120,6 +156,10 @@
             event.preventDefault();
             resultArea.style.display = 'none';
             errorArea.style.display = 'none';
+            // Hide and clear passport analysis area from middle column on new submission
+            document.getElementById('passport-analysis-display-area').style.display = 'none';
+            document.getElementById('passportAnalysisContent').innerHTML = '';
+
             submitButton.disabled = true;
             submitButton.textContent = 'Classifying...';
 
@@ -171,6 +211,11 @@
                 });
 
                 const data = await response.json();
+                const classificationResultDiv = document.getElementById('classificationResult');
+                
+                // For passport analysis in the second column
+                const passportDisplayArea = document.getElementById('passport-analysis-display-area');
+                const passportContentDiv = document.getElementById('passportAnalysisContent');
 
                 if (response.ok) {
                     let resultHTML = `<p><strong>File:</strong> ${data.filename}</p>`;
@@ -179,8 +224,20 @@
                     if (data.ai_provider === 'openai') {
                         resultHTML += `<p><strong>Detail Level Used:</strong> ${data.detail_used}</p>`;
                     }
-                    resultText.innerHTML = resultHTML;
+                    
+                    // Display general classification in the first column
+                    classificationResultDiv.innerHTML = resultHTML;
                     resultArea.style.display = 'block';
+                    
+                    // Display Passport Analysis in the second column if available
+                    if (data.passport_analysis) {
+                        passportContentDiv.innerHTML = `<pre>${JSON.stringify(data.passport_analysis, null, 2)}</pre>`;
+                        passportDisplayArea.style.display = 'block';
+                    } else {
+                        passportContentDiv.innerHTML = ''; // Clear it if no analysis
+                        passportDisplayArea.style.display = 'none';
+                    }
+
                 } else {
                     let errorMessage = data.error || `HTTP error! Status: ${response.status}`;
                     if (data.status_code) {
@@ -188,13 +245,20 @@
                     }
                     errorText.textContent = errorMessage;
                     errorArea.style.display = 'block';
+                    
+                    // Ensure passport display area is hidden on error too
+                    passportDisplayArea.style.display = 'none';
+                    passportContentDiv.innerHTML = '';
                 }
             } catch (error) {
                 errorText.textContent = `Request failed: ${error.message}`;
                 errorArea.style.display = 'block';
+                 // Ensure passport display area is hidden on error too
+                document.getElementById('passport-analysis-display-area').style.display = 'none';
+                document.getElementById('passportAnalysisContent').innerHTML = '';
             }
             finally {
-                submitButton.disabled = false; // Re-enable after attempt, but file is now cleared by reset button typically
+                submitButton.disabled = false; 
                 submitButton.textContent = 'Classify Document';
             }
         });
@@ -204,17 +268,25 @@
             uploadForm.reset(); // Resets form fields to their initial values
             fileInput.value = ''; // Clear the file input explicitly
             fileNameDisplay.textContent = 'No file selected';
-            fileNameDisplay.style.color = '#aaa';
+            // fileNameDisplay.style.color = '#aaa'; // Already in your code or can be adjusted
             uploadArea.classList.remove('dragging');
             submitButton.disabled = true; // Disable submit button on reset
             submitButton.textContent = 'Classify Document';
             detailSelect.value = 'auto'; // Reset detail level
             aiProviderSelect.value = 'openai'; // Reset AI provider
+            document.getElementById('candidateProfileInfo').value = ''; // Reset candidate profile textarea
+            
             resultArea.style.display = 'none';
-            resultText.innerHTML = ''; // Clear previous results
+            resultText.innerHTML = ''; // Clear previous results in first column
+            
             errorArea.style.display = 'none';
             errorText.textContent = '';
-            console.log("Form reset");
+
+            // Clear and hide passport analysis area in the second column
+            document.getElementById('passport-analysis-display-area').style.display = 'none';
+            document.getElementById('passportAnalysisContent').innerHTML = '';
+            
+            console.log("Form reset, all result areas cleared.");
         }
 
         // Event listener for the reset button
