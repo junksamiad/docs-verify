@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn 
 openai
 python-multipart
 Pillow
@@ -7,3 +7,4 @@ pdf2image
 Pillow-HEIF
 google-generativeai
 python-dotenv
+python-docx

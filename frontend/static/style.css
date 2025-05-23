@@ -228,9 +228,9 @@ textarea#candidateProfileInfo:focus {
     margin-top: 10px;
 }
 
-button#submitBtn,
-button#resetButton {
-    border: none;
+/* General button base styles */
+.button {
+    border: none; /* Base, can be overridden by specific button types */
     padding: 12px 20px;
     font-size: 1em;
     font-weight: 500;
@@ -239,8 +239,10 @@ button#resetButton {
     transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
     width: 100%;
     box-sizing: border-box;
+    text-align: center;
 }
 
+/* Primary button (inherits from .button) */
 button#submitBtn {
     background-color: var(--primary-color);
     color: white;
@@ -262,19 +264,20 @@ button#submitBtn:disabled {
     box-shadow: none;
 }
 
-button#resetButton {
-    background-color: var(--secondary-color);
+/* Secondary button (inherits from .button) */
+.secondary-button {
+    background-color: var(--secondary-color); /* Uses the light grey from :root */
     color: var(--text-color);
     border: 1px solid var(--border-color);
 }
 
-button#resetButton:hover {
-    background-color: #e9ecef;
-    border-color: #B0BEC5;
+.secondary-button:hover {
+    background-color: #e9ecef; /* Slightly darker for hover, matching old resetButton hover */
+    border-color: #B0BEC5; /* Matching old resetButton hover */
     box-shadow: var(--box-shadow-hover);
 }
 
-button#resetButton:active {
+.secondary-button:active {
     transform: scale(0.98);
 }
 

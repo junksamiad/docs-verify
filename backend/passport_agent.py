@@ -49,15 +49,19 @@ def analyze_passport_image(image_path: str) -> dict | None:
     
     prompt_text = (
         "You are an AI assistant tasked with analyzing passport images. "
-        "Carefully examine the provided passport image. Your goal is to objectively describe its features and extract information. \n"
-        "1. Describe observable visual characteristics of the document. Note any standard passport features visible (e.g., specific watermarks if clearly discernible, type of font if it appears unusual, photo integration method if visible). Do not speculate on authenticity. \n"
-        "2. Extract all visible textual information from the passport. This includes, but is not limited to: "
-        "surname, given names, passport number, nationality, date of birth, sex, date of issue, date of expiry, issuing authority, place of birth, and any MRZ (Machine Readable Zone) lines if present and legible.\n"
+        "Carefully examine the provided passport image. Your goal is to objectively describe its features, assess its quality, identify potential issues, and extract information. \n\n"
+        "1. Image Quality Assessment: Provide a brief summary of the passport image quality (e.g., clarity, lighting, obstructions, glare). Example: \"Image is clear, well-lit, with no obstructions.\" or \"Image is slightly blurry with some glare over the date of birth.\".\n"
+        "2. Manual Verification Flags: Identify and list any specific visual characteristics, anomalies, or inconsistencies that might suggest the document warrants manual human verification. Examples: \"Unusual font detected in the 'Date of Issue' field.\", \"Edge of the photograph appears to be digitally manipulated.\", \"MRZ checksum appears inconsistent (if calculable and suspicious).\" If no specific flags, state \"No specific flags for manual verification noted from visual inspection.\".\n"
+        "3. Observable Visual Characteristics: Describe observable visual characteristics of the document. Note any standard passport features visible (e.g., specific watermarks if clearly discernible, type of font if it appears standard or unusual, photo integration method if visible). Do not speculate on authenticity beyond flagging potential issues for manual review. \n"
+        "4. Extract Information: Extract all visible textual information from the passport. This includes, but is not limited to: "
+        "surname, given names, passport number, nationality, date of birth, sex, date of issue, date of expiry, issuing authority, place of birth, and any MRZ (Machine Readable Zone) lines if present and legible.\n\n"
         "Your response MUST be a single, valid JSON object. Do not include any text outside of this JSON object. "
         "The JSON object should have the following top-level keys: \n"
-        "  - \"observed_features\": (string, a description of visible characteristics and standard features noted)\n"
+        "  - \"image_quality_summary\": (string, your assessment of the image quality itself)\n"
+        "  - \"manual_verification_flags\": (array of strings, each string being a reason for potential manual review; or an empty array if none noted)\n"
+        "  - \"observed_features\": (string, a description of visible document characteristics and standard features noted)\n"
         "  - \"extracted_information\": (an object containing all extracted fields, e.g., { \"surname\": \"value\", \"given_names\": \"value\", ...})\n"
-        "If certain information is not visible or legible, represent its value as null or omit the key within 'extracted_information'. "
+        "If certain information for 'extracted_information' is not visible or legible, represent its value as null or omit the key within that object. "
         "If MRZ lines are present and legible, include them as a field named \"mrz_lines\" within 'extracted_information'."
     )
 
@@ -90,10 +94,16 @@ def analyze_passport_image(image_path: str) -> dict | None:
             try:
                 parsed_json = json.loads(api_response_content)
                 # Updated validation for new top-level keys
-                if all(key in parsed_json for key in ["observed_features", "extracted_information"]):
+                required_keys = ["image_quality_summary", "manual_verification_flags", "observed_features", "extracted_information"]
+                if all(key in parsed_json for key in required_keys):
+                    # Optionally, validate the type of manual_verification_flags
+                    if not isinstance(parsed_json.get("manual_verification_flags"), list):
+                        print("[PassportAgent WARNING] 'manual_verification_flags' is not a list. Attempting to use as is, but review agent prompt/response.")
+                        # You could attempt to wrap it in a list if it's a string, or handle error
                     return parsed_json
                 else:
-                    print("[PassportAgent ERROR] Returned JSON is missing one or more required top-level keys ('observed_features', 'extracted_information').")
+                    print("[PassportAgent ERROR] Returned JSON is missing one or more required top-level keys.")
+                    print(f"[PassportAgent LOG] Expected keys: {required_keys}")
                     print(f"[PassportAgent LOG] Received keys: {list(parsed_json.keys())}")
                     return {"error": "Passport analysis returned incomplete data structure.", "details": api_response_content}
 

@@ -9,7 +9,7 @@
 <body>
     <div class="page-container">
         <header>
-            <h1>Document Image Classifier</h1>
+            <h1>Document Verification System</h1>
             <p>Upload an image of a document to classify its type.</p>
         </header>
 
@@ -19,10 +19,10 @@
                 <h2>Classification</h2>
                 <form id="upload-form" enctype="multipart/form-data">
                     <div class="upload-area" id="upload-area">
-                        <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif" required>
+                        <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif, .docx" required>
                         <label for="file-input" class="upload-label">
                             <img src="{{ url_for('static', filename='upload_icon.svg') }}" alt="Upload Icon" class="upload-icon">
-                            <p>Drag & drop an image here, or click to select</p>
+                            <p>Drag & drop an image or document here, or click to select</p>
                             <span id="file-name-display"></span>
                         </label>
                     </div>
@@ -47,8 +47,8 @@
                     </div>
 
                     <div class="button-group">
-                        <button type="submit" id="submitBtn">Classify Document</button>
-                        <button type="button" id="resetButton" class="secondary-button">Start New Classification</button>
+                        <button type="submit" id="submitBtn" class="button">Classify Document</button>
+                        <button type="button" id="resetButton" class="button secondary-button">Start New Classification</button>
                     </div>
                 </form>
 
@@ -63,36 +63,23 @@
                 </div>
             </div>
 
-            <!-- Column 2: Candidate Profile Info -->
+            <!-- Column 2: Candidate Profile Info / Passport Analysis -->
             <div class="grid-column column-candidate-info">
-                <h2>Candidate Profile</h2>
-                <div class="form-group">
-                    <label for="candidateProfileInfo">Profile Information:</label>
-                    <textarea id="candidateProfileInfo" name="candidateProfileInfo" rows="10" placeholder="Enter any relevant candidate profile information here..."></textarea>
+                <!-- Repurposed area for the main document type -->
+                <div id="document-type-display-area" style="display: none; text-align: center; margin-bottom: 15px;">
+                    <h2 id="documentTypeResult" style="font-size: 1.8em; font-weight: bold; margin-bottom: 0; color: #333;"></h2>
                 </div>
 
-                <!-- New area for passport analysis -->
-                <div id="passport-analysis-display-area" class="result-area" style="display: none; margin-top: 20px;">
-                    <h3>Passport Analysis Details:</h3>
+                <!-- Existing area for analysis details -->
+                <div id="passport-analysis-display-area" class="result-area" style="display: none;">
+                    <h3 style="margin-top: 0; margin-bottom: 15px; text-align: center;">Document Analysis Details</h3>
                     <div id="passportAnalysisContent"></div> <!-- Content will be injected here -->
                 </div>
-            </div>
 
-            <!-- Column 3: Document Checklist -->
-            <div class="grid-column column-doc-checklist">
-                <h2>Document Checklist</h2>
-                <ul class="doc-checklist">
-                    {% if possible_doc_types %}
-                        {% for doc_type in possible_doc_types %}
-                            <li>
-                                <input type="checkbox" id="doc-{{ loop.index }}" name="doc-{{ loop.index }}" value="{{ doc_type }}" disabled>
-                                <label for="doc-{{ loop.index }}">{{ doc_type }}</label>
-                            </li>
-                        {% endfor %}
-                    {% else %}
-                        <li>No document types loaded.</li>
-                    {% endif %}
-                </ul>
+                <!-- New area for CV-specific actions -->
+                <div id="cv-actions-area" style="display: none; margin-top: 20px; text-align: center;">
+                    <button id="clarifyWorkExpBtn" class="button secondary-button">Clarify Work Experience by Whatsapp</button>
+                </div>
             </div>
         </div>
 
@@ -114,6 +101,268 @@
         const detailSelect = document.getElementById('detailLevel');
         const resetButton = document.getElementById('resetButton');
         const aiProviderSelect = document.getElementById('aiProvider');
+
+        // New elements for displaying doc type in right column
+        const documentTypeDisplayArea = document.getElementById('document-type-display-area');
+        const documentTypeResultP = document.getElementById('documentTypeResult');
+
+        // New CV actions area
+        const cvActionsArea = document.getElementById('cv-actions-area');
+
+        // Helper to prevent XSS if data contains HTML characters
+        function escapeHtml(unsafe) {
+            if (typeof unsafe !== 'string') {
+                unsafe = String(unsafe); // Convert to string if not already
+            }
+            return unsafe
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
+
+        function snakeToTitleCase(str) {
+            if (!str) return '';
+            return str.split('_')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+        }
+
+        function formatPassportDataAsMarkdown(passportData) {
+            if (!passportData) return '';
+
+            let html = '<ul style="list-style-type: none; padding-left: 0;">'; // Changed to list-style-type: none and padding-left: 0 for cleaner look
+
+            // Handle image_quality_summary
+            if (passportData.image_quality_summary) {
+                html += `<li><strong>Image Quality Summary:</strong> ${escapeHtml(passportData.image_quality_summary)}</li>`;
+            }
+
+            // Handle manual_verification_flags
+            if (passportData.hasOwnProperty('manual_verification_flags')) { // Check if property exists
+                const flags = passportData.manual_verification_flags;
+                let recommendedText = "No";
+                let flagsListHtml = '';
+
+                if (Array.isArray(flags) && flags.length > 0) {
+                    recommendedText = "Yes";
+                    flagsListHtml += '<ul style="list-style-type: circle; margin-left: 20px; margin-top: 5px;">';
+                    flags.forEach(flag => {
+                        flagsListHtml += `<li>${escapeHtml(flag)}</li>`;
+                    });
+                    flagsListHtml += '</ul>';
+                } else if (!Array.isArray(flags) && flags && flags.toLowerCase().includes('no specific flags')) {
+                    recommendedText = "No"; // Handles string like "No specific flags noted"
+                } else if (!Array.isArray(flags) && flags) {
+                     // If it's a non-empty string not indicating "no flags", assume it implies manual check
+                    recommendedText = "Yes";
+                    flagsListHtml = `<p style="margin-left: 20px; margin-top: 5px;">${escapeHtml(flags)}</p>`;
+                }
+                html += `<li><strong>Manual Verification Recommended:</strong> ${recommendedText}</li>`;
+                if (flagsListHtml) {
+                    html += flagsListHtml;
+                }
+            }
+
+            // Handle observed_features
+            if (passportData.observed_features) {
+                html += `<li><strong>Document Summary:</strong> ${escapeHtml(passportData.observed_features)}</li>`;
+            }
+
+            // Handle extracted_information (which is an object)
+            if (passportData.extracted_information && typeof passportData.extracted_information === 'object') {
+                html += '<li><strong>Document Details:</strong>';
+                html += '<ul style="list-style-type: none; margin-left: 20px; padding-left: 0; margin-top: 5px;">'; // Changed to list-style-type: none
+                for (const key in passportData.extracted_information) {
+                    if (Object.hasOwnProperty.call(passportData.extracted_information, key)) {
+                        const value = passportData.extracted_information[key];
+                        html += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(value)}</li>`;
+                    }
+                }
+                html += '</ul></li>';
+            }
+
+            // Handle any other top-level keys (should not happen with strict agent output)
+            for (const key in passportData) {
+                if (key !== 'image_quality_summary' && key !== 'manual_verification_flags' &&
+                    key !== 'observed_features' && key !== 'extracted_information' && Object.hasOwnProperty.call(passportData, key)) {
+                    html += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(JSON.stringify(passportData[key], null, 2))}</li>`;
+                }
+            }
+            html += '</ul>';
+            return html;
+        }
+
+        function formatCvDataAsMarkdown(cvData) {
+            if (!cvData) return '';
+
+            let html = '<ul style="list-style-type: none; padding-left: 0;">';
+
+            // Image Quality Summary
+            if (cvData.image_quality_summary) {
+                html += `<li><strong>Image Quality Summary:</strong> ${escapeHtml(cvData.image_quality_summary)}</li>`;
+            }
+
+            // Manual Verification Flags
+            if (cvData.hasOwnProperty('manual_verification_flags')) {
+                const flags = cvData.manual_verification_flags;
+                let recommendedText = "No";
+                let flagsListHtml = '';
+                if (Array.isArray(flags) && flags.length > 0) {
+                    recommendedText = "Yes";
+                    flagsListHtml += '<ul style="list-style-type: circle; margin-left: 20px; margin-top: 5px;">';
+                    flags.forEach(flag => { flagsListHtml += `<li>${escapeHtml(flag)}</li>`; });
+                    flagsListHtml += '</ul>';
+                } else if (!Array.isArray(flags) && flags && !flags.toLowerCase().includes('no specific flags')) {
+                    recommendedText = "Yes"; // A non-empty string that isn't explicitly "no flags"
+                    flagsListHtml = `<p style="margin-left: 20px; margin-top: 5px;">${escapeHtml(flags)}</p>`;
+                }
+                html += `<li><strong>Manual Verification Recommended:</strong> ${recommendedText}</li>`;
+                if (flagsListHtml) html += flagsListHtml;
+            }
+
+            // CV Data (nested object)
+            if (cvData.cv_data && typeof cvData.cv_data === 'object') {
+                html += '<li><strong>CV Details:</strong>';
+                html += '<ul style="list-style-type: none; margin-left: 20px; padding-left: 0; margin-top: 5px;">';
+                
+                const cvDetails = cvData.cv_data;
+
+                // Personal Details
+                if (cvDetails.personal_details) {
+                    html += `<li><strong>Personal Details:</strong><ul>`;
+                    for (const key in cvDetails.personal_details) {
+                        html += `<li><strong>${snakeToTitleCase(key)}:</strong> ${escapeHtml(cvDetails.personal_details[key])}</li>`;
+                    }
+                    html += '</ul></li>';
+                }
+
+                // Summary/Objective
+                if (cvDetails.summary_objective) {
+                    html += `<li><strong>Summary/Objective:</strong> ${escapeHtml(cvDetails.summary_objective)}</li>`;
+                }
+
+                // Work Experience (array of objects)
+                if (Array.isArray(cvDetails.work_experience) && cvDetails.work_experience.length > 0) {
+                    html += '<li><strong>Work Experience:</strong>';
+                    html += '<ul style="list-style-type: disc; margin-left: 20px;">';
+                    cvDetails.work_experience.forEach(exp => {
+                        html += '<li>';
+                        if(exp.job_title) html += `<strong>${escapeHtml(exp.job_title)}</strong>`;
+                        if(exp.company_name) html += ` at ${escapeHtml(exp.company_name)}`;
+                        if(exp.employment_dates) html += ` (${escapeHtml(exp.employment_dates)})`;
+                        if(exp.responsibilities_achievements) html += `<p style="margin-left: 20px; font-size: 0.9em;">${escapeHtml(exp.responsibilities_achievements)}</p>`;
+                        html += '</li>';
+                    });
+                    html += '</ul></li>';
+                }
+
+                // Education (array of objects)
+                if (Array.isArray(cvDetails.education) && cvDetails.education.length > 0) {
+                    html += '<li><strong>Education:</strong>';
+                    html += '<ul style="list-style-type: disc; margin-left: 20px;">';
+                    cvDetails.education.forEach(edu => {
+                        html += '<li>';
+                        if(edu.degree_qualification) html += `<strong>${escapeHtml(edu.degree_qualification)}</strong>`;
+                        if(edu.institution_name) html += ` from ${escapeHtml(edu.institution_name)}`;
+                        if(edu.graduation_date_period) html += ` (${escapeHtml(edu.graduation_date_period)})`;
+                        html += '</li>';
+                    });
+                    html += '</ul></li>';
+                }
+
+                // Skills (array of strings or object)
+                if (cvDetails.skills) {
+                    html += '<li><strong>Skills:</strong> ';
+                    if (Array.isArray(cvDetails.skills)) {
+                        html += escapeHtml(cvDetails.skills.join(', '));
+                    } else if (typeof cvDetails.skills === 'object'){
+                        let skillDetails = '';
+                        for(const category in cvDetails.skills) {
+                            skillDetails += `<br/>&nbsp;&nbsp;<em>${snakeToTitleCase(category)}:</em> ${escapeHtml(cvDetails.skills[category].join(', '))}`;
+                        }
+                        html += skillDetails;
+                    } else {
+                        html += escapeHtml(cvDetails.skills);
+                    }
+                    html += '</li>';
+                }
+                
+                // References Availability
+                if (cvDetails.references_availability) {
+                    html += `<li><strong>References:</strong> ${escapeHtml(cvDetails.references_availability)}</li>`;
+                }
+
+                html += '</ul></li>'; // End of CV Details main list item
+            }
+            html += '</ul>';
+            return html;
+        }
+
+        function formatDrivingLicenceDataAsMarkdown(dlData) {
+            if (!dlData) return '';
+
+            let html = '<ul style="list-style-type: none; padding-left: 0;">';
+
+            // Image Quality Summary
+            if (dlData.image_quality_summary) {
+                html += `<li><strong>Image Quality Summary:</strong> ${escapeHtml(dlData.image_quality_summary)}</li>`;
+            }
+
+            // Manual Verification Flags
+            if (dlData.hasOwnProperty('manual_verification_flags')) {
+                const flags = dlData.manual_verification_flags;
+                let recommendedText = "No";
+                let flagsListHtml = '';
+                if (Array.isArray(flags) && flags.length > 0) {
+                    recommendedText = "Yes";
+                    flagsListHtml += '<ul style="list-style-type: circle; margin-left: 20px; margin-top: 5px;">';
+                    flags.forEach(flag => { flagsListHtml += `<li>${escapeHtml(flag)}</li>`; });
+                    flagsListHtml += '</ul>';
+                } else if (!Array.isArray(flags) && flags && !flags.toLowerCase().includes('no specific flags')) {
+                    recommendedText = "Yes"; 
+                    flagsListHtml = `<p style="margin-left: 20px; margin-top: 5px;">${escapeHtml(flags)}</p>`;
+                }
+                html += `<li><strong>Manual Verification Recommended:</strong> ${recommendedText}</li>`;
+                if (flagsListHtml) html += flagsListHtml;
+            }
+
+            // Licence Details (nested object)
+            if (dlData.licence_details && typeof dlData.licence_details === 'object') {
+                html += '<li><strong>Licence Details:</strong>';
+                html += '<ul style="list-style-type: none; margin-left: 20px; padding-left: 0; margin-top: 5px;">';
+                
+                const details = dlData.licence_details;
+                for (const key in details) {
+                    if (Object.hasOwnProperty.call(details, key)) {
+                        const value = details[key];
+                        if (key === 'categories_entitlements' && Array.isArray(value)) {
+                             html += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(value.join(', '))}</li>`;
+                        } else if (key === 'restrictions') {
+                            if (Array.isArray(value)) {
+                                html += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(value.join(', '))}</li>`;
+                            } else if (value) {
+                                html += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(value)}</li>`;
+                            }
+                        } else if (value !== null && value !== undefined) {
+                            html += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(value)}</li>`;
+                        }
+                    }
+                }
+                html += '</ul></li>'; 
+            }
+            html += '</ul>';
+            return html;
+        }
+
+        function applyStylesToAnalysisBox(element) {
+            element.style.maxHeight = '400px';
+            element.style.overflowY = 'auto';
+            element.style.border = '1px solid #ddd';
+            element.style.padding = '10px';
+            element.style.wordBreak = 'break-word';
+        }
 
         // Disable submit button initially
         submitButton.disabled = true;
@@ -159,6 +408,11 @@
             // Hide and clear passport analysis area from middle column on new submission
             document.getElementById('passport-analysis-display-area').style.display = 'none';
             document.getElementById('passportAnalysisContent').innerHTML = '';
+            // Hide new document type display area on new submission
+            if(documentTypeDisplayArea) documentTypeDisplayArea.style.display = 'none';
+            if(documentTypeResultP) documentTypeResultP.textContent = '';
+            // Hide CV actions area on new submission
+            if(cvActionsArea) cvActionsArea.style.display = 'none';
 
             submitButton.disabled = true;
             submitButton.textContent = 'Classifying...';
@@ -170,10 +424,14 @@
 
             // --- START: Frontend File Type Validation ---
             if (file) {
-                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'image/heic', 'image/heif'];
-                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i, /'.pdf$'/i, /'.heic$'/i, /'.heif$'/i];
+                const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'image/heic', 'image/heif'];
+                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i, /'.pdf$'/i, /'.heic$'/i, /'.heif$'/i, /'.docx$'/i];
                 
-                let isValidType = allowedTypes.includes(file.type);
+                let isValidType = allowedMimeTypes.includes(file.type);
+                // For docx, file.type might be application/vnd.openxmlformats-officedocument.wordprocessingml.document or application/octet-stream
+                if (file.name.toLowerCase().endsWith('.docx')) {
+                    isValidType = true; // Directly allow if extension is .docx, as MIME type can vary
+                }
                 let isValidExtension = allowedExtensions.some(ext => ext.test(file.name));
 
                 // Prioritize MIME type, but use extension as a fallback if MIME type is generic (e.g., application/octet-stream for some uploads)
@@ -185,7 +443,7 @@
                 }
 
                 if (!isValidType && !isValidExtension) { // If neither is valid, reject
-                    errorText.textContent = `Invalid file type: ${file.name}. Please upload a JPG, PNG, GIF, WEBP, PDF, HEIC or HEIF file.`;
+                    errorText.textContent = `Invalid file type: ${file.name}. Please upload an Image (JPG, PNG, GIF, WEBP, HEIC/HEIF), PDF, or DOCX file.`;
                     errorArea.style.display = 'block';
                     submitButton.disabled = false;
                     submitButton.textContent = 'Classify Document';
@@ -218,24 +476,52 @@
                 const passportContentDiv = document.getElementById('passportAnalysisContent');
 
                 if (response.ok) {
-                    let resultHTML = `<p><strong>File:</strong> ${data.filename}</p>`;
-                    resultHTML += `<p><strong>Classified as:</strong> ${data.document_type}</p>`;
-                    resultHTML += `<p><strong>AI Provider:</strong> ${data.ai_provider}</p>`;
-                    if (data.ai_provider === 'openai') {
-                        resultHTML += `<p><strong>Detail Level Used:</strong> ${data.detail_used}</p>`;
+                    // Clear old result area in left column
+                    classificationResultDiv.innerHTML = '';
+                    resultArea.style.display = 'none';
+
+                    // Display Document Type in the new top-right area
+                    if(documentTypeResultP) documentTypeResultP.textContent = data.document_type;
+                    if(documentTypeDisplayArea) {
+                        documentTypeDisplayArea.style.display = 'block';
                     }
                     
-                    // Display general classification in the first column
-                    classificationResultDiv.innerHTML = resultHTML;
-                    resultArea.style.display = 'block';
-                    
-                    // Display Passport Analysis in the second column if available
+                    // Clear any previous analysis content
+                    passportContentDiv.innerHTML = ''; 
+                    passportContentDiv.style.maxHeight = null;
+                    passportContentDiv.style.overflowY = null;
+                    passportContentDiv.style.border = null;
+                    passportContentDiv.style.padding = null;
+                    passportContentDiv.style.wordBreak = null;
+                    passportDisplayArea.style.display = 'none'; // Hide by default
+
+                    // Display Passport Analysis if available
                     if (data.passport_analysis) {
-                        passportContentDiv.innerHTML = `<pre>${JSON.stringify(data.passport_analysis, null, 2)}</pre>`;
+                        const formattedHtml = formatPassportDataAsMarkdown(data.passport_analysis);
+                        passportContentDiv.innerHTML = formattedHtml;
+                        applyStylesToAnalysisBox(passportContentDiv);
                         passportDisplayArea.style.display = 'block';
+                    }
+                    // Display CV Analysis if available (mutually exclusive with passport for now in display)
+                    else if (data.cv_analysis) { 
+                        const formattedHtml = formatCvDataAsMarkdown(data.cv_analysis);
+                        passportContentDiv.innerHTML = formattedHtml; // Re-using the same div
+                        applyStylesToAnalysisBox(passportContentDiv); // Apply common styles
+                        passportDisplayArea.style.display = 'block'; // Make the area visible
+                    }
+                    // Display Driving Licence Analysis if available
+                    else if (data.driving_licence_analysis) {
+                        const formattedHtml = formatDrivingLicenceDataAsMarkdown(data.driving_licence_analysis);
+                        passportContentDiv.innerHTML = formattedHtml; // Re-using the same div
+                        applyStylesToAnalysisBox(passportContentDiv); // Apply common styles
+                        passportDisplayArea.style.display = 'block'; // Make the area visible
+                    }
+
+                    // Show CV-specific actions if document is CV
+                    if (data.document_type === "CV") {
+                        if(cvActionsArea) cvActionsArea.style.display = 'block';
                     } else {
-                        passportContentDiv.innerHTML = ''; // Clear it if no analysis
-                        passportDisplayArea.style.display = 'none';
+                        if(cvActionsArea) cvActionsArea.style.display = 'none';
                     }
 
                 } else {
@@ -274,7 +560,6 @@
             submitButton.textContent = 'Classify Document';
             detailSelect.value = 'auto'; // Reset detail level
             aiProviderSelect.value = 'openai'; // Reset AI provider
-            document.getElementById('candidateProfileInfo').value = ''; // Reset candidate profile textarea
             
             resultArea.style.display = 'none';
             resultText.innerHTML = ''; // Clear previous results in first column
@@ -282,9 +567,18 @@
             errorArea.style.display = 'none';
             errorText.textContent = '';
 
+            // Clear and hide new document type display area
+            if(documentTypeResultP) documentTypeResultP.textContent = '';
+            if(documentTypeDisplayArea) {
+                documentTypeDisplayArea.style.display = 'none';
+            }
+
             // Clear and hide passport analysis area in the second column
             document.getElementById('passport-analysis-display-area').style.display = 'none';
             document.getElementById('passportAnalysisContent').innerHTML = '';
+
+            // Hide CV actions area on reset
+            if(cvActionsArea) cvActionsArea.style.display = 'none';
             
             console.log("Form reset, all result areas cleared.");
         }
