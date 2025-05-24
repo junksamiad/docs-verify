@@ -1,104 +1,144 @@
-from google import genai # Updated import
-from google.genai import types # Updated import for types
+from google import genai
+from google.genai.types import Part, GenerateContentConfig, Blob
+import inspect, sys
+
+print("--- DIAGNOSTIC PROBE --- START ---")
+print("google-genai version :", getattr(genai, '__version__', 'NOT FOUND')) # Use getattr for safety
+if hasattr(genai.types, 'Part'):
+    try:
+        # Attempt to inspect the Part we are importing directly
+        from google.genai.types import Part as SpecificPart # Import it directly for inspection
+        print("Imported Part object specific:", SpecificPart)
+        print("Specific Part class defined in module:", inspect.getmodule(SpecificPart).__file__ if inspect.getmodule(SpecificPart) else "Unknown module")
+        # Also check the genai.types.Part for comparison
+        print("genai.types.Part class defined in:", inspect.getfile(genai.types.Part))
+    except Exception as e:
+        print(f"Error inspecting Part: {e}")
+else:
+    print("genai.types.Part not found or genai module incorrect.")
+print("sys.path snippet    :", sys.path[:5]) # Show a bit more of sys.path
+print("--- DIAGNOSTIC PROBE --- END ---")
+
 import os
 import json
 from PIL import Image # For reading image dimensions if needed, and basic ops
 from pydantic import BaseModel, Field # For response schema definition
 from typing import Optional, List
 
+# Initialize client (will pick up GOOGLE_API_KEY from env)
+# Or explicitly: client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+client: Optional[genai.Client] = None
+if os.environ.get("GOOGLE_API_KEY"):
+    try:
+        client = genai.Client()
+        print("[GeminiClassifier LOG] genai.Client() initialized.")
+    except Exception as e:
+        print(f"[GeminiClassifier ERROR] Failed to initialize genai.Client(): {e}")
+        client = None # Ensure client is None if initialization fails
+else:
+    print("Error [GeminiClassifier]: GOOGLE_API_KEY environment variable not set. genai.Client() will not be initialized.")
+
 # --- Pydantic Model for Gemini Response ---
 class GeminiDocTypeResponse(BaseModel):
     predicted_document_type: Optional[str] = Field(default=None)
 
 # --- Model Configuration ---
-GEMINI_MODEL_ID = 'gemini-1.5-flash'  # Updated to a common and available model
+GEMINI_MODEL_ID = 'gemini-2.5-flash-preview-05-20'  # Ensure this is the desired flash model
 GEMINI_FRIENDLY_NAME = f"Google Gemini ({GEMINI_MODEL_ID})" # Display name for the UI
 # --- End Model Configuration ---
 
-_gemini_client = None
-
-def get_gemini_client() -> Optional[genai.Client]:
-    """Initializes and returns the Gemini client if API key is set."""
-    global _gemini_client
-    if _gemini_client:
-        return _gemini_client
-
-    google_api_key = os.environ.get("GOOGLE_API_KEY")
-    if not google_api_key:
-        print("Error [GeminiClassifier]: GOOGLE_API_KEY environment variable not set.")
-        return None
-    try:
-        _gemini_client = genai.Client(api_key=google_api_key)
-        print("[GeminiClassifier LOG] Gemini client initialized successfully.")
-        return _gemini_client
-    except Exception as e:
-        print(f"Error [GeminiClassifier]: Failed to initialize Gemini client: {e}")
-        return None
-
-def classify_image_with_gemini(image_path: str, image_mime_type: str, document_types: list[str]) -> str | None:
+def classify_document_with_gemini(file_path: str, original_mime_type: str, document_types: list[str]) -> str | None:
     """
-    Classifies the type of document shown in an image using the Google Gemini API.
-    The image path should point to a processed image (e.g., PNG from PDF/HEIC conversion).
+    Classifies the type of document shown in an image or PDF using the Google Gemini API.
 
     Args:
-        image_path: Path to the image file (e.g., PNG).
-        image_mime_type: The MIME type of the image file (e.g., 'image/png').
+        file_path: Path to the file (image or PDF).
+        original_mime_type: The original MIME type of the file (e.g., 'image/png', 'application/pdf').
         document_types: A list of strings representing the possible document types.
 
     Returns:
         The predicted document type as a string, or None if an error occurs.
     """
-    client = get_gemini_client()
+    global client
     if not client:
-        return None # Error already printed by get_gemini_client
+        print("Error [GeminiClassifier]: Gemini client not initialized. Cannot proceed.")
+        return None
     
-    if not os.path.exists(image_path):
-        print(f"Error [GeminiClassifier]: Image file not found at {image_path}")
+    # Model ID is now defined globally, no need to create genai.GenerativeModel() here
+    # The client.models.generate_content takes the model string directly.
+
+    if not os.path.exists(file_path):
+        print(f"Error [GeminiClassifier]: File not found at {file_path}")
         return None
     if not document_types:
         print("Error [GeminiClassifier]: Document types list cannot be empty.")
         return None
-    if not image_mime_type or not image_mime_type.startswith("image/"):
-        print(f"Error [GeminiClassifier]: Invalid or missing image MIME type: {image_mime_type}")
-        return None
+    
+    # Determine the MIME type to use for the API call
+    api_mime_type = original_mime_type
+    if original_mime_type not in ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"]:
+        # Basic fallback for safety, though server.py should provide a valid one.
+        # If it's an image that was converted, it should be image/png by now.
+        # If it's an unknown image type, this might be an issue.
+        print(f"Warning [GeminiClassifier]: Potentially unsupported original_mime_type '{original_mime_type}'. Attempting as octet-stream or will rely on server conversion to PNG for images.")
+        # For now, assume if it's not PDF, it's an image type Gemini can handle or has been converted to PNG by server.py
+        if not original_mime_type.startswith("image/") and original_mime_type != "application/pdf":
+             api_mime_type = "image/png" # Default to png if it was converted by server.py from something exotic
 
     try:
-        print(f"[GeminiClassifier LOG] Reading image file: {image_path} with MIME type: {image_mime_type}")
-        with open(image_path, 'rb') as f:
-            image_bytes = f.read()
+        print(f"[GeminiClassifier LOG] Reading file: {file_path} with effective MIME type for API: {api_mime_type}")
+        with open(file_path, 'rb') as f:
+            file_bytes = f.read()
         
-        # Use types.Part for image data with the new SDK
-        image_part = types.Part.from_data(mime_type=image_mime_type, data=image_bytes)
+        # Manual Part construction for file data
+        file_part = Part(
+            inline_data=Blob(
+                data=file_bytes,
+                mime_type=api_mime_type
+            )
+        )
         
-        # Define the expected JSON structure for the prompt
-        prompt = (
-            f"Analyze the document in the provided image and classify its type. "
+        prompt_text_content = (
+            f"Analyze the document (image or PDF) and classify its type. "
             f"Your response MUST be a single JSON object. "
             f"The JSON object must have exactly one key: 'predicted_document_type'. "
             f"The value for 'predicted_document_type' must be one of the following exact strings: {document_types}. "
             f"If the document type is not clearly one of these, or if it's ambiguous, choose the closest match or 'Unknown' if that is an option. "
             f"Do not include any other text, explanations, or markdown formatting outside of this JSON object."
         )
+        prompt_part = Part(text=prompt_text_content) # Manual text Part construction
         
-        print(f"[GeminiClassifier LOG] Sending prompt to Gemini ({GEMINI_MODEL_ID}): {prompt[:200]}...")
+        print(f"[GeminiClassifier LOG] Sending prompt to Gemini ({GEMINI_MODEL_ID}): {prompt_text_content[:200]}...")
 
-        # The contents should be [prompt, image_part] or [image_part, prompt]
-        # For multimodal, common practice is often image first, then text prompt.
-        contents = [image_part, prompt] 
+        contents = [file_part, prompt_part] # File part first, then prompt part
         
-        # Create GenerationConfig object - CHANGED TO GenerateContentConfig
-        generation_config = types.GenerateContentConfig(
+        # Use GenerateContentConfig as per google_libraries.md for new SDK client.models.generate_content config
+        generation_config_obj = GenerateContentConfig( 
             temperature=0.2,
             response_mime_type="application/json",
-            response_schema=GeminiDocTypeResponse
+            max_output_tokens=4096, # Adjusted for classification (was 50000, then 2048, setting to 4096)
+            # response_schema is typically used with genai.GenerativeModel().generate_content(), 
+            # For client.models.generate_content(), the schema is often passed as a dict within the config if needed, 
+            # or relied upon by the model if response_mime_type is json.
+            # Let's omit response_schema here to align with the simpler client.models.generate_content examples.
         )
         
         response = client.models.generate_content(
-            model=GEMINI_MODEL_ID,
+            model=GEMINI_MODEL_ID, # Pass model string directly
             contents=contents,
-            config=generation_config # Pass GenerationConfig object to 'config' parameter
+            config=generation_config_obj 
         )
         
+        # Log finish reason if candidates exist
+        if response.candidates:
+            try:
+                finish_reason_name = response.candidates[0].finish_reason.name
+                print(f"[GeminiClassifier LOG] Gemini API call finish_reason: {finish_reason_name}")
+            except AttributeError:
+                print("[GeminiClassifier WARNING] Could not retrieve finish_reason name from response candidate.")
+        else:
+            print("[GeminiClassifier WARNING] No candidates found in Gemini response to log finish_reason.")
+
         api_response_text = None
         if response.text:
             api_response_text = response.text
@@ -143,14 +183,20 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
             if response.prompt_feedback and response.prompt_feedback.block_reason:
                 reason_name = response.prompt_feedback.block_reason.name if hasattr(response.prompt_feedback.block_reason, 'name') else response.prompt_feedback.block_reason
                 print(f"Error [GeminiClassifier]: Request was blocked. Reason: {reason_name}")
+            # Log finish_reason here as well if it's not STOP and not already logged, or if it indicates an issue
             elif response.candidates and response.candidates[0].finish_reason.name != 'STOP':
-                reason_name = response.candidates[0].finish_reason.name
+                # This log might be redundant if already logged above, but good for error path clarity
+                reason_name = response.candidates[0].finish_reason.name 
                 safety_ratings_str = str(response.candidates[0].safety_ratings)
-                print(f"Error [GeminiClassifier]: Did not finish successfully. Reason: {reason_name}. Details: {safety_ratings_str}")
+                print(f"Error [GeminiClassifier]: Did not finish successfully. Finish Reason: {reason_name}. Details: {safety_ratings_str}")
+            # else if already logged and was STOP, no need to repeat error for STOP.
             return None
 
     except Exception as e:
-        print(f"An error occurred while calling the Gemini API or processing its response: {e}")
+        print(f"[GeminiClassifier ERROR] An error occurred while calling the Gemini API or processing its response: {e}")
+        import traceback
+        print("[GeminiClassifier TRACEBACK]")
+        traceback.print_exc() # Print full traceback for more details
         return None
 
 if __name__ == '__main__':
@@ -171,24 +217,51 @@ if __name__ == '__main__':
         doc_types = ["Invoice", "Receipt", "Letter", "ID Card", "Passport", "Report", "Unknown"]
 
         if os.path.exists(sample_png_path):
-            print(f"\n--- Test Case 1: Classifying '{sample_png_path}' ---")
-            classification = classify_image_with_gemini(sample_png_path, sample_mime_type, doc_types)
-            print(f"Predicted Document Type (Gemini): {classification}")
+            print(f"\n--- Test Case 1: Classifying image '{sample_png_path}' ---")
+            classification = classify_document_with_gemini(sample_png_path, sample_mime_type, doc_types)
+            print(f"Predicted Document Type (Gemini Image): {classification}")
             
-            print(f"\n--- Test Case 2: Classifying with a more restrictive list ---")
+            print(f"\n--- Test Case 2: Classifying image with a more restrictive list ---")
             restricted_types = ["Invoice", "Receipt"]
-            classification_restricted = classify_image_with_gemini(sample_png_path, sample_mime_type, restricted_types)
-            print(f"Predicted Document Type (Gemini, restricted): {classification_restricted}")
+            classification_restricted = classify_document_with_gemini(sample_png_path, sample_mime_type, restricted_types)
+            print(f"Predicted Document Type (Gemini Image, restricted): {classification_restricted}")
+
+        # Test with a dummy PDF
+        sample_pdf_path = "temp_gemini_test_doc.pdf"
+        sample_pdf_mime_type = "application/pdf"
+        if not os.path.exists(sample_pdf_path):
+            try:
+                from reportlab.pdfgen import canvas
+                c = canvas.Canvas(sample_pdf_path)
+                c.drawString(100, 750, "This is a test PDF document for classification.")
+                c.drawString(100, 730, "It could be an Invoice or a Report.")
+                c.save()
+                print(f"Created dummy test PDF: {sample_pdf_path}")
+            except ImportError:
+                print("reportlab is not installed. Cannot create a dummy PDF. pip install reportlab")
+            except Exception as e:
+                print(f"Could not create dummy PDF: {e}")
+
+        if os.path.exists(sample_pdf_path):
+            print(f"\n--- Test Case 3: Classifying PDF '{sample_pdf_path}' ---")
+            classification_pdf = classify_document_with_gemini(sample_pdf_path, sample_pdf_mime_type, doc_types)
+            print(f"Predicted Document Type (Gemini PDF): {classification_pdf}")
 
         # Test with empty document types
-        print("\n--- Test Case 3: Empty document types list (should return None) ---")
-        classification_empty = classify_image_with_gemini(sample_png_path, sample_mime_type, [])
+        print("\n--- Test Case 4: Empty document types list (should return None) ---")
+        classification_empty = classify_document_with_gemini(sample_png_path, sample_mime_type, [])
         print(f"Predicted Document Type (Gemini, empty types): {classification_empty}")
 
-        # Clean up dummy file
+        # Clean up dummy files
         if os.path.exists(sample_png_path):
             try:
                 os.remove(sample_png_path)
                 print(f"Removed dummy test image: {sample_png_path}")
             except OSError as e:
-                print(f"Error removing dummy test image {sample_png_path}: {e}") 
+                print(f"Error removing dummy test image {sample_png_path}: {e}")
+        if os.path.exists(sample_pdf_path):
+            try:
+                os.remove(sample_pdf_path)
+                print(f"Removed dummy test PDF: {sample_pdf_path}")
+            except OSError as e:
+                print(f"Error removing dummy test PDF {sample_pdf_path}: {e}") 

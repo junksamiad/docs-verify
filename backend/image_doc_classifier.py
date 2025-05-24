@@ -36,10 +36,14 @@ def convert_to_png_if_needed(original_path: str, original_mime_type: str | None)
     converted_image_path = None
     new_mime_type = original_mime_type
 
+    # User-specified Poppler path
+    # Ensure backslashes are properly escaped for Python strings, or use raw strings.
+    poppler_bin_path = r"C:\Users\cbyro\OneDrive\cursorWorkspace\DocValidation\Release-24.08.0-0 (1)\poppler-24.08.0\Library\bin"
+
     try:
         if original_mime_type == "application/pdf" or extension.lower() == ".pdf":
-            print(f"Converting PDF: {original_path}")
-            images = convert_from_path(original_path, first_page=1, last_page=1, fmt='png')
+            print(f"Converting PDF: {original_path} using Poppler from: {poppler_bin_path}")
+            images = convert_from_path(original_path, first_page=1, last_page=1, fmt='png', poppler_path=poppler_bin_path)
             if images:
                 converted_image_path = os.path.join(CONVERTED_TEMP_DIR, f"{filename}_converted.png")
                 images[0].save(converted_image_path, "PNG")

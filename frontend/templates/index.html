@@ -488,6 +488,54 @@
                         if(cvActionsArea) cvActionsArea.style.display = 'none';
                     }
 
+                    let resultHtml = '';
+                    resultHtml += `<p><strong>Document Type:</strong> ${data.document_type}</p>`;
+                    resultHtml += `<p><strong>AI Provider:</strong> ${data.ai_provider || 'N/A'}</p>`;
+                    resultHtml += `<p><strong>Detail Used:</strong> ${data.detail_used || 'N/A'}</p>`;
+
+                    if (data.bank_statement_analysis) {
+                        let bsHtmlFragment = '<h3>Bank Statement Analysis (UK):</h3>'; // Changed variable name
+                        if (data.bank_statement_analysis.error) {
+                            bsHtmlFragment += `<p><strong>Error:</strong> ${data.bank_statement_analysis.error}</p>`;
+                            if (data.bank_statement_analysis.details) {
+                                 bsHtmlFragment += `<p><strong>Details:</strong> ${data.bank_statement_analysis.details}</p>`;
+                            }
+                        } else {
+                            // Display header info
+                            bsHtmlFragment += `<p><strong>Name:</strong> ${data.bank_statement_analysis.name || 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Bank:</strong> ${data.bank_statement_analysis.bank_provider || 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Sort Code:</strong> ${data.bank_statement_analysis.sort_code || 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Account Number:</strong> ${data.bank_statement_analysis.account_number || 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Address:</strong> ${data.bank_statement_analysis.address || 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Statement Period:</strong> ${data.bank_statement_analysis.statement_start_date || 'N/A'} to ${data.bank_statement_analysis.statement_end_date || 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Total Paid In:</strong> ${data.bank_statement_analysis.total_paid_in !== null ? data.bank_statement_analysis.total_paid_in.toFixed(2) : 'N/A'}</p>`;
+                            bsHtmlFragment += `<p><strong>Total Paid Out:</strong> ${data.bank_statement_analysis.total_paid_out !== null ? data.bank_statement_analysis.total_paid_out.toFixed(2) : 'N/A'}</p>`;
+                            
+                            // Display transactions in a table
+                            if (data.bank_statement_analysis.transactions && data.bank_statement_analysis.transactions.length > 0) {
+                                bsHtmlFragment += '<h4>Transactions:</h4>';
+                                bsHtmlFragment += '<table class="transactions-table">';
+                                bsHtmlFragment += '<thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Direction</th><th>Balance After</th><th>Category</th></tr></thead>';
+                                bsHtmlFragment += '<tbody>';
+                                data.bank_statement_analysis.transactions.forEach(tx => {
+                                    bsHtmlFragment += '<tr>';
+                                    bsHtmlFragment += `<td>${tx.date || 'N/A'}</td>`;
+                                    bsHtmlFragment += `<td>${tx.description || 'N/A'}</td>`;
+                                    bsHtmlFragment += `<td>${tx.amount !== null ? tx.amount.toFixed(2) : 'N/A'}</td>`;
+                                    bsHtmlFragment += `<td>${tx.direction || 'N/A'}</td>`;
+                                    bsHtmlFragment += `<td>${tx.balance_after !== null ? tx.balance_after.toFixed(2) : 'N/A'}</td>`;
+                                    bsHtmlFragment += `<td>${tx.category || 'N/A'}</td>`;
+                                    bsHtmlFragment += '</tr>';
+                                });
+                                bsHtmlFragment += '</tbody></table>';
+                            } else {
+                                bsHtmlFragment += '<p>No transactions found or provided.</p>';
+                            }
+                        }
+                        resultHtml += bsHtmlFragment; // Append bank statement analysis to general info
+                    }
+
+                    resultArea.innerHTML = resultHtml; // Display general info and all appended analysis sections
                 } else {
                     let errorMessage = data.error || `HTTP error! Status: ${response.status}`;
                     if (data.status_code) {

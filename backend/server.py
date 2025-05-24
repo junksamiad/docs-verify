@@ -1,5 +1,18 @@
-from dotenv import load_dotenv
-load_dotenv() # Load environment variables from .env file
+import os # Ensure os is imported if not already
+from dotenv import load_dotenv # Removed find_dotenv for now, will use explicit path
+
+# Construct the path to the .env file relative to this script (server.py)
+# __file__ is the path to the current script (server.py)
+# os.path.dirname(__file__) is the directory of the current script (backend/)
+# os.path.join(os.path.dirname(__file__), '.env') is backend/.env
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(dotenv_path=dotenv_path)
+
+# Debug: Print the API key after attempting to load .env
+print(f"[SERVER DOTENV DEBUG] Attempted to load .env from: {dotenv_path}")
+print(f"[SERVER DOTENV DEBUG] OPENAI_API_KEY found in environment: {'Yes' if os.getenv('OPENAI_API_KEY') else 'No'}")
+# If found, you might want to print a masked version for security in real logs, e.g., os.getenv('OPENAI_API_KEY')[:5] + '...'
+# For this debug, knowing 'Yes' or 'No' is key.
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -11,11 +24,12 @@ import mimetypes # For guessing MIME types
 from .image_doc_classifier import classify_image_document_type as classify_with_openai
 from .image_doc_classifier import OPENAI_FRIENDLY_NAME, convert_to_png_if_needed as convert_image_for_processing
 # Gemini Classifier
-from .gemini_doc_classifier import classify_image_with_gemini
+from .gemini_doc_classifier import classify_document_with_gemini
 from .gemini_doc_classifier import GEMINI_FRIENDLY_NAME
 from .passport_agent import analyze_passport_image # Import the new passport agent
 from .cv_agent import analyze_cv_image, analyze_cv_from_text # Import the new CV agent
 from .driving_licence_agent import analyze_driving_licence_image # Import the new Driving Licence agent
+from .bank_statement_agent import analyze_bank_statement_image, analyze_bank_statement_pdf # Import both bank statement functions
 
 # Text Document Classifier
 from .text_doc_classifier import extract_text_from_docx, classify_text_document_type
@@ -105,19 +119,29 @@ async def classify_document_endpoint(file: UploadFile = File(...),
         else:
             print(f"[SERVER LOG] Processing Image/PDF file: {file.filename}")
             # Image/PDF processing path (existing logic)
-            converted_path, final_mime = convert_image_for_processing(temp_file_path, file_mime_type)
-            if not converted_path:
-                raise HTTPException(status_code=500, detail="Image/PDF conversion failed.")
-            path_for_further_processing = converted_path
+            
+            # Conditional conversion for OpenAI or if Gemini gets an image that needs it
+            if ai_provider.lower() == "openai" or (ai_provider.lower() == "gemini" and not file_mime_type == "application/pdf"):
+                print(f"[SERVER LOG] Converting file {file.filename} to PNG for processing.")
+                converted_path, final_mime = convert_image_for_processing(temp_file_path, file_mime_type)
+                if not converted_path:
+                    raise HTTPException(status_code=500, detail="Image/PDF conversion failed for OpenAI/Gemini-Image path.")
+                path_for_further_processing = converted_path
+            else: # For Gemini with PDF, use the original path
+                print(f"[SERVER LOG] Using original PDF {file.filename} for Gemini classification.")
+                path_for_further_processing = temp_file_path
+                final_mime = file_mime_type # Original MIME type is PDF
             
             if ai_provider.lower() == "openai":
                 classification_result = classify_with_openai(path_for_further_processing, final_mime, POSSIBLE_DOC_TYPES, detail)
                 print(f"[CLASSIFICATION LOG - OpenAI Image] Classified '{file.filename}' as: '{classification_result}'")
             elif ai_provider.lower() == "gemini":
-                classification_result = classify_image_with_gemini(path_for_further_processing, final_mime, POSSIBLE_DOC_TYPES)
-                print(f"[CLASSIFICATION LOG - Gemini Image] Classified '{file.filename}' as: '{classification_result}'")
+                # Pass the original MIME type if it's a PDF for Gemini, else the final_mime (which would be image/png if converted)
+                mime_for_gemini_classifier = file_mime_type if file_mime_type == "application/pdf" else final_mime
+                classification_result = classify_document_with_gemini(path_for_further_processing, mime_for_gemini_classifier, POSSIBLE_DOC_TYPES)
+                print(f"[CLASSIFICATION LOG - Gemini Document] Classified '{file.filename}' as: '{classification_result}'")
             else:
-                raise HTTPException(status_code=400, detail=f"Invalid AI provider for image: '{ai_provider}'.")
+                raise HTTPException(status_code=400, detail=f"Invalid AI provider for image/pdf: '{ai_provider}'.")
 
         if not classification_result:
             raise HTTPException(status_code=500, detail="Document classification failed to return a type.")
@@ -130,7 +154,8 @@ async def classify_document_endpoint(file: UploadFile = File(...),
             "ai_provider": ai_provider if not is_docx_file else 'text_classifier', # Indicate text classifier for DOCX
             "passport_analysis": None,
             "cv_analysis": None,
-            "driving_licence_analysis": None # Add new key for driving licence
+            "driving_licence_analysis": None, # Add new key for driving licence
+            "bank_statement_analysis": None   # Add new key for bank statement
         }
 
         # --- Specialized Agent Processing ---
@@ -155,6 +180,24 @@ async def classify_document_endpoint(file: UploadFile = File(...),
             print(f"[SERVER LOG] Driving Licence analysis using image: {file.filename}")
             dl_data = analyze_driving_licence_image(path_for_further_processing)
             final_response_content["driving_licence_analysis"] = dl_data if dl_data else {"error": "Driving licence analysis failed or no data."}
+
+        elif classification_result == "Bank Statement":
+            if file_mime_type == "application/pdf" and not is_docx_file: # Check if original upload was PDF
+                print(f"[SERVER LOG] Bank Statement (from PDF) analysis using direct PDF: {file.filename}")
+                # Use the original temp_file_path for the PDF, not the potentially converted one
+                bs_data = analyze_bank_statement_pdf(temp_file_path) 
+            elif not is_docx_file and path_for_further_processing: # Fallback to image analysis if not PDF or if it was an image initially
+                print(f"[SERVER LOG] Bank Statement (from Image) analysis using image: {file.filename}")
+                # Ensure path_for_further_processing is the converted PNG if the original was PDF but processed as image for classification
+                # This case should be less common now for bank statements if Gemini is chosen for classification & PDF is passed directly.
+                # If classification was OpenAI, path_for_further_processing is already the PNG.
+                # If classification was Gemini (PDF direct) but somehow this path is hit for bank statement *image* analysis, 
+                # it means the initial file wasn't PDF or we didn't take the direct PDF path for bank statement analysis.
+                # The path_for_further_processing should be correct from the classification stage.
+                bs_data = analyze_bank_statement_image(path_for_further_processing)
+            else:
+                bs_data = {"error": "Could not determine input type for Bank Statement analysis or it was a DOCX classified as Bank Statement which is not directly supported by this agent."}
+            final_response_content["bank_statement_analysis"] = bs_data if bs_data else {"error": "Bank statement analysis failed or no data."}
 
         return JSONResponse(content=final_response_content)
 

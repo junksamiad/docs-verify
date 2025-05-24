@@ -426,4 +426,39 @@ th {
     margin-top: 5px;
     max-height: 200px;
     overflow-y: auto;
+}
+
+/* Styles for transaction table in bank statement analysis */
+.transactions-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    font-size: 0.9em; /* Slightly smaller font for table data */
+}
+
+.transactions-table th,
+.transactions-table td {
+    border: 1px solid var(--border-color);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.transactions-table th {
+    background-color: #f8f9fa; /* Light grey for table header */
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.transactions-table tbody tr:nth-child(odd) {
+    background-color: #fcfcfc; /* Zebra striping for rows */
+}
+
+.transactions-table td {
+    color: #546E7A; /* Slightly lighter text for table data */
+}
+
+/* Optional: if descriptions are long */
+.transactions-table td:nth-child(2) { /* Assuming description is the second column */
+    word-break: break-word;
 } 
