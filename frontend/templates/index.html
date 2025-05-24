@@ -78,7 +78,8 @@
 
                 <!-- New area for CV-specific actions -->
                 <div id="cv-actions-area" style="display: none; margin-top: 20px; text-align: center;">
-                    <button id="clarifyWorkExpBtn" class="button secondary-button">Clarify Work Experience by Whatsapp</button>
+                    <button id="clarifyWorkExpBtn" class="button secondary-button" onclick="handleClarifyByWhatsapp()">Clarify Work Experience by Whatsapp</button>
+                    <div id="clarifyApiStatus" class="api-status-area" style="display: none; margin-top: 10px;"></div> <!-- New div for API status -->
                 </div>
             </div>
         </div>
@@ -106,8 +107,18 @@
         const documentTypeDisplayArea = document.getElementById('document-type-display-area');
         const documentTypeResultP = document.getElementById('documentTypeResult');
 
-        // New CV actions area
+        // CV actions area and its components
         const cvActionsArea = document.getElementById('cv-actions-area');
+        const clarifyButton = document.getElementById('clarifyWorkExpBtn'); // Corrected ID
+        const clarifyApiStatusDiv = document.getElementById('clarifyApiStatus'); // Corrected: Ensure this is defined after the element exists or use querySelector after DOM load. For now, assume it's fine.
+
+        // Result and error areas (these were duplicated, using the more specific ones)
+        const resultDiv = document.getElementById('result-area');
+        const classificationResultDiv = document.getElementById('classificationResult'); // Specific div for classification text
+        const errorDiv = document.getElementById('error-area');
+        const errorTextP = document.getElementById('error-text'); // Specific p for error text
+
+        window.classificationResultData = null; // To store classification result for the clarify button
 
         // Helper to prevent XSS if data contains HTML characters
         function escapeHtml(unsafe) {
@@ -199,103 +210,54 @@
 
             let html = '<ul style="list-style-type: none; padding-left: 0;">';
 
-            // Image Quality Summary
+            // Image Quality Summary (or Text Readability/Structure Assessment)
             if (cvData.image_quality_summary) {
-                html += `<li><strong>Image Quality Summary:</strong> ${escapeHtml(cvData.image_quality_summary)}</li>`;
+                html += `<li><strong>Quality/Structure Summary:</strong> ${escapeHtml(cvData.image_quality_summary)}</li>`;
             }
 
-            // Manual Verification Flags
-            if (cvData.hasOwnProperty('manual_verification_flags')) {
-                const flags = cvData.manual_verification_flags;
-                let recommendedText = "No";
-                let flagsListHtml = '';
-                if (Array.isArray(flags) && flags.length > 0) {
-                    recommendedText = "Yes";
-                    flagsListHtml += '<ul style="list-style-type: circle; margin-left: 20px; margin-top: 5px;">';
-                    flags.forEach(flag => { flagsListHtml += `<li>${escapeHtml(flag)}</li>`; });
-                    flagsListHtml += '</ul>';
-                } else if (!Array.isArray(flags) && flags && !flags.toLowerCase().includes('no specific flags')) {
-                    recommendedText = "Yes"; // A non-empty string that isn't explicitly "no flags"
-                    flagsListHtml = `<p style="margin-left: 20px; margin-top: 5px;">${escapeHtml(flags)}</p>`;
-                }
-                html += `<li><strong>Manual Verification Recommended:</strong> ${recommendedText}</li>`;
-                if (flagsListHtml) html += flagsListHtml;
-            }
-
-            // CV Data (nested object)
-            if (cvData.cv_data && typeof cvData.cv_data === 'object') {
-                html += '<li><strong>CV Details:</strong>';
-                html += '<ul style="list-style-type: none; margin-left: 20px; padding-left: 0; margin-top: 5px;">';
-                
-                const cvDetails = cvData.cv_data;
-
-                // Personal Details
-                if (cvDetails.personal_details) {
-                    html += `<li><strong>Personal Details:</strong><ul>`;
-                    for (const key in cvDetails.personal_details) {
-                        html += `<li><strong>${snakeToTitleCase(key)}:</strong> ${escapeHtml(cvDetails.personal_details[key])}</li>`;
+            // Personal Details
+            if (cvData.personal_details && typeof cvData.personal_details === 'object') {
+                const details = cvData.personal_details;
+                let personalDetailsHtml = '<li><strong>Personal Details:</strong>';
+                personalDetailsHtml += '<ul style="list-style-type: disc; margin-left: 20px; padding-left: 0; margin-top: 5px;">';
+                let hasDetails = false;
+                for (const key in details) {
+                    if (Object.hasOwnProperty.call(details, key) && details[key] !== null && details[key] !== '') {
+                        personalDetailsHtml += `<li><strong>${escapeHtml(snakeToTitleCase(key))}:</strong> ${escapeHtml(details[key])}</li>`;
+                        hasDetails = true;
                     }
-                    html += '</ul></li>';
                 }
-
-                // Summary/Objective
-                if (cvDetails.summary_objective) {
-                    html += `<li><strong>Summary/Objective:</strong> ${escapeHtml(cvDetails.summary_objective)}</li>`;
+                if (!hasDetails) {
+                    personalDetailsHtml += '<li>No personal details extracted.</li>';
                 }
-
-                // Work Experience (array of objects)
-                if (Array.isArray(cvDetails.work_experience) && cvDetails.work_experience.length > 0) {
-                    html += '<li><strong>Work Experience:</strong>';
-                    html += '<ul style="list-style-type: disc; margin-left: 20px;">';
-                    cvDetails.work_experience.forEach(exp => {
-                        html += '<li>';
-                        if(exp.job_title) html += `<strong>${escapeHtml(exp.job_title)}</strong>`;
-                        if(exp.company_name) html += ` at ${escapeHtml(exp.company_name)}`;
-                        if(exp.employment_dates) html += ` (${escapeHtml(exp.employment_dates)})`;
-                        if(exp.responsibilities_achievements) html += `<p style="margin-left: 20px; font-size: 0.9em;">${escapeHtml(exp.responsibilities_achievements)}</p>`;
-                        html += '</li>';
-                    });
-                    html += '</ul></li>';
-                }
-
-                // Education (array of objects)
-                if (Array.isArray(cvDetails.education) && cvDetails.education.length > 0) {
-                    html += '<li><strong>Education:</strong>';
-                    html += '<ul style="list-style-type: disc; margin-left: 20px;">';
-                    cvDetails.education.forEach(edu => {
-                        html += '<li>';
-                        if(edu.degree_qualification) html += `<strong>${escapeHtml(edu.degree_qualification)}</strong>`;
-                        if(edu.institution_name) html += ` from ${escapeHtml(edu.institution_name)}`;
-                        if(edu.graduation_date_period) html += ` (${escapeHtml(edu.graduation_date_period)})`;
-                        html += '</li>';
-                    });
-                    html += '</ul></li>';
-                }
-
-                // Skills (array of strings or object)
-                if (cvDetails.skills) {
-                    html += '<li><strong>Skills:</strong> ';
-                    if (Array.isArray(cvDetails.skills)) {
-                        html += escapeHtml(cvDetails.skills.join(', '));
-                    } else if (typeof cvDetails.skills === 'object'){
-                        let skillDetails = '';
-                        for(const category in cvDetails.skills) {
-                            skillDetails += `<br/>&nbsp;&nbsp;<em>${snakeToTitleCase(category)}:</em> ${escapeHtml(cvDetails.skills[category].join(', '))}`;
-                        }
-                        html += skillDetails;
-                    } else {
-                        html += escapeHtml(cvDetails.skills);
-                    }
-                    html += '</li>';
-                }
-                
-                // References Availability
-                if (cvDetails.references_availability) {
-                    html += `<li><strong>References:</strong> ${escapeHtml(cvDetails.references_availability)}</li>`;
-                }
-
-                html += '</ul></li>'; // End of CV Details main list item
+                personalDetailsHtml += '</ul></li>';
+                html += personalDetailsHtml;
             }
+
+            // Work Experience Gaps
+            if (cvData.work_experience_gaps && Array.isArray(cvData.work_experience_gaps) && cvData.work_experience_gaps.length > 0) {
+                html += '<li><strong>Identified Work Experience Gaps:</strong>';
+                html += '<ul style="list-style-type: disc; margin-left: 20px; margin-top: 5px;">';
+                cvData.work_experience_gaps.forEach(gap => {
+                    html += `<li>${escapeHtml(gap)}</li>`;
+                });
+                html += '</ul></li>';
+            } else if (cvData.hasOwnProperty('work_experience_gaps')) { // If key exists but is empty or not an array
+                 html += '<li><strong>Identified Work Experience Gaps:</strong> No significant gaps identified.</li>';
+            }
+
+            // Other Verification Flags
+            if (cvData.other_verification_flags && Array.isArray(cvData.other_verification_flags) && cvData.other_verification_flags.length > 0) {
+                html += '<li><strong>Other Verification Flags:</strong>';
+                html += '<ul style="list-style-type: disc; margin-left: 20px; margin-top: 5px;">';
+                cvData.other_verification_flags.forEach(flag => {
+                    html += `<li>${escapeHtml(flag)}</li>`;
+                });
+                html += '</ul></li>';
+            } else if (cvData.hasOwnProperty('other_verification_flags')) {
+                 html += '<li><strong>Other Verification Flags:</strong> No other specific flags noted.</li>';
+            }
+            
             html += '</ul>';
             return html;
         }
@@ -476,6 +438,8 @@
                 const passportContentDiv = document.getElementById('passportAnalysisContent');
 
                 if (response.ok) {
+                    window.classificationResultData = data; // Assign the full response data here
+
                     // Clear old result area in left column
                     classificationResultDiv.innerHTML = '';
                     resultArea.style.display = 'none';
@@ -551,41 +515,136 @@
 
         // Function to reset the form
         function resetForm() {
-            uploadForm.reset(); // Resets form fields to their initial values
-            fileInput.value = ''; // Clear the file input explicitly
-            fileNameDisplay.textContent = 'No file selected';
-            // fileNameDisplay.style.color = '#aaa'; // Already in your code or can be adjusted
-            uploadArea.classList.remove('dragging');
-            submitButton.disabled = true; // Disable submit button on reset
-            submitButton.textContent = 'Classify Document';
-            detailSelect.value = 'auto'; // Reset detail level
-            aiProviderSelect.value = 'openai'; // Reset AI provider
-            
-            resultArea.style.display = 'none';
-            resultText.innerHTML = ''; // Clear previous results in first column
-            
-            errorArea.style.display = 'none';
-            errorText.textContent = '';
+            uploadForm.reset(); // Resets the form including file input and select dropdowns
+            fileNameDisplay.textContent = '';
+            uploadArea.classList.remove('file-selected'); // Assuming this class is added on file selection
 
-            // Clear and hide new document type display area
-            if(documentTypeResultP) documentTypeResultP.textContent = '';
-            if(documentTypeDisplayArea) {
-                documentTypeDisplayArea.style.display = 'none';
+            resultDiv.style.display = 'none';
+            classificationResultDiv.innerHTML = '';
+            errorDiv.style.display = 'none';
+            errorTextP.textContent = '';
+
+            documentTypeDisplayArea.style.display = 'none';
+            documentTypeResultP.textContent = '';
+            
+            const passportAnalysisDisplayArea = document.getElementById('passport-analysis-display-area');
+            if(passportAnalysisDisplayArea) passportAnalysisDisplayArea.style.display = 'none';
+            const passportAnalysisContent = document.getElementById('passportAnalysisContent');
+            if(passportAnalysisContent) passportAnalysisContent.innerHTML = '';
+
+            cvActionsArea.style.display = 'none';
+            if (clarifyApiStatusDiv) { // Check if it exists before manipulating
+                clarifyApiStatusDiv.innerHTML = '';
+                clarifyApiStatusDiv.style.display = 'none';
+                clarifyApiStatusDiv.className = 'api-status-area'; // Reset class
             }
-
-            // Clear and hide passport analysis area in the second column
-            document.getElementById('passport-analysis-display-area').style.display = 'none';
-            document.getElementById('passportAnalysisContent').innerHTML = '';
-
-            // Hide CV actions area on reset
-            if(cvActionsArea) cvActionsArea.style.display = 'none';
             
-            console.log("Form reset, all result areas cleared.");
+            window.classificationResultData = null;
+            submitButton.disabled = false;
+            submitButton.textContent = 'Classify Document';
+            console.log("Form reset executed.");
         }
 
         // Event listener for the reset button
         if(resetButton) {
             resetButton.addEventListener('click', resetForm);
+        }
+
+        async function handleClarifyByWhatsapp() {
+            if (!clarifyApiStatusDiv) {
+                console.error("clarifyApiStatusDiv is not found in the DOM");
+                return;
+            }
+            clarifyApiStatusDiv.innerHTML = 'Preparing request...';
+            clarifyApiStatusDiv.style.display = 'block';
+            clarifyApiStatusDiv.className = 'api-status-area'; // Reset class
+
+            const API_GATEWAY_URL="https://xlijn1k4xh.execute-api.eu-north-1.amazonaws.com/dev/initiate-conversation";
+            const API_KEY="yQQ9GW4Yk38JMpQz3cMJd31HH5wdAYC1y54X1W84";
+
+            // --- Data Sourcing from CV Analysis (window.classificationResultData) ---
+            const cvAnalysis = window.classificationResultData?.cv_analysis;
+            const personalDetails = cvAnalysis?.personal_details;
+
+            const recipient_name_from_cv = personalDetails?.name || "";
+            let recipient_tel_raw_from_cv = personalDetails?.phone_number || "";
+            const recipient_email_from_cv = personalDetails?.email_address || "";
+            
+            // Data for project_data field
+            const extracted_personal_details_for_project = personalDetails || {};
+            const identified_work_gaps_for_project = cvAnalysis?.work_experience_gaps || [];
+
+            // --- Data Transformation (Phone Number) ---
+            let recipient_tel_formatted = recipient_tel_raw_from_cv;
+            if (recipient_tel_raw_from_cv) { // Ensure it's not null or undefined
+                recipient_tel_raw_from_cv = recipient_tel_raw_from_cv.replace(/\s+/g, ''); // Remove all spaces
+            }
+
+            if (recipient_tel_raw_from_cv && recipient_tel_raw_from_cv.startsWith('0')) {
+                recipient_tel_formatted = '+44' + recipient_tel_raw_from_cv.substring(1);
+            } else if (recipient_tel_raw_from_cv && !recipient_tel_raw_from_cv.startsWith('+') && recipient_tel_raw_from_cv.length > 0) { // Avoid prefixing empty strings or already prefixed numbers
+                recipient_tel_formatted = '+44' + recipient_tel_raw_from_cv;
+            } else {
+                recipient_tel_formatted = recipient_tel_raw_from_cv; // Use as is if already prefixed or empty after space removal
+            }
+
+            const payload = {
+              company_data: {
+                company_id: "ci-aaa-003",
+                project_id: "pi-aaa-003"
+              },
+              recipient_data: {
+                recipient_first_name: (recipient_name_from_cv.split(' ')[0] || ""),
+                recipient_last_name: (recipient_name_from_cv.split(' ').slice(1).join(' ') || ""),
+                recipient_tel: recipient_tel_formatted,
+                recipient_email: recipient_email_from_cv,
+                comms_consent: true
+              },
+              project_data: {
+                personal_data: extracted_personal_details_for_project,
+                work_experience_gaps: identified_work_gaps_for_project
+              },
+              request_data: {
+                request_id: crypto.randomUUID(),
+                channel_method: "whatsapp",
+                initial_request_timestamp: new Date().toISOString()
+              }
+            };
+
+            console.log("Sending WhatsApp API payload:", JSON.stringify(payload, null, 2));
+            clarifyApiStatusDiv.innerHTML = 'Sending request to WhatsApp API... <pre>' + escapeHtml(JSON.stringify(payload, null, 2)) + '</pre>';
+
+            try {
+                const response = await fetch(API_GATEWAY_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': API_KEY
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                // Try to parse JSON, but handle cases where it might not be (e.g. network error page)
+                let responseData;
+                try {
+                    responseData = await response.json();
+                } catch (e) {
+                    // If JSON parsing fails, use the text content if available
+                    responseData = { message: await response.text() };
+                }
+
+                if (response.ok) {
+                    clarifyApiStatusDiv.innerHTML = 'Successfully initiated WhatsApp conversation! Response: <pre>' + escapeHtml(JSON.stringify(responseData, null, 2)) + '</pre>';
+                    clarifyApiStatusDiv.className = 'api-status-area success';
+                } else {
+                    clarifyApiStatusDiv.innerHTML = 'Error from WhatsApp API: ' + escapeHtml(responseData.message || response.statusText) + '<pre>' + escapeHtml(JSON.stringify(responseData, null, 2)) + '</pre>';
+                    clarifyApiStatusDiv.className = 'api-status-area error';
+                }
+            } catch (error) {
+                console.error("Error sending to WhatsApp API:", error);
+                clarifyApiStatusDiv.innerHTML = 'Failed to send request: ' + escapeHtml(error.message);
+                clarifyApiStatusDiv.className = 'api-status-area error';
+            }
         }
     </script>
 </body>

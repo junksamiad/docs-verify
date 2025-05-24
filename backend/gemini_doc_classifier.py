@@ -1,17 +1,39 @@
-import google.generativeai as genai
+from google import genai # Updated import
+from google.genai import types # Updated import for types
 import os
 import json
 from PIL import Image # For reading image dimensions if needed, and basic ops
+from pydantic import BaseModel, Field # For response schema definition
+from typing import Optional, List
+
+# --- Pydantic Model for Gemini Response ---
+class GeminiDocTypeResponse(BaseModel):
+    predicted_document_type: Optional[str] = Field(default=None)
 
 # --- Model Configuration ---
-GEMINI_MODEL_ID = 'gemini-2.0-flash'  # The actual model ID used for the API call
+GEMINI_MODEL_ID = 'gemini-1.5-flash'  # Updated to a common and available model
 GEMINI_FRIENDLY_NAME = f"Google Gemini ({GEMINI_MODEL_ID})" # Display name for the UI
 # --- End Model Configuration ---
 
-# Ensure your GOOGLE_API_KEY environment variable is set.
-# You can set it using: export GOOGLE_API_KEY='your_gemini_api_key'
-# genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
-# Simpler initialization if the key is globally configured for the SDK or picked up automatically
+_gemini_client = None
+
+def get_gemini_client() -> Optional[genai.Client]:
+    """Initializes and returns the Gemini client if API key is set."""
+    global _gemini_client
+    if _gemini_client:
+        return _gemini_client
+
+    google_api_key = os.environ.get("GOOGLE_API_KEY")
+    if not google_api_key:
+        print("Error [GeminiClassifier]: GOOGLE_API_KEY environment variable not set.")
+        return None
+    try:
+        _gemini_client = genai.Client(api_key=google_api_key)
+        print("[GeminiClassifier LOG] Gemini client initialized successfully.")
+        return _gemini_client
+    except Exception as e:
+        print(f"Error [GeminiClassifier]: Failed to initialize Gemini client: {e}")
+        return None
 
 def classify_image_with_gemini(image_path: str, image_mime_type: str, document_types: list[str]) -> str | None:
     """
@@ -26,130 +48,147 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
     Returns:
         The predicted document type as a string, or None if an error occurs.
     """
-    if not os.environ.get("GOOGLE_API_KEY"):
-        print("Error: GOOGLE_API_KEY environment variable not set.")
-        return None
+    client = get_gemini_client()
+    if not client:
+        return None # Error already printed by get_gemini_client
     
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-
     if not os.path.exists(image_path):
-        print(f"Error [Gemini]: Image file not found at {image_path}")
+        print(f"Error [GeminiClassifier]: Image file not found at {image_path}")
         return None
     if not document_types:
-        print("Error [Gemini]: Document types list cannot be empty.")
+        print("Error [GeminiClassifier]: Document types list cannot be empty.")
         return None
     if not image_mime_type or not image_mime_type.startswith("image/"):
-        print(f"Error [Gemini]: Invalid or missing image MIME type: {image_mime_type}")
-        return None # Gemini requires a valid image MIME type
+        print(f"Error [GeminiClassifier]: Invalid or missing image MIME type: {image_mime_type}")
+        return None
 
     try:
-        print(f"[Gemini LOG] Reading image file: {image_path} with MIME type: {image_mime_type}")
+        print(f"[GeminiClassifier LOG] Reading image file: {image_path} with MIME type: {image_mime_type}")
         with open(image_path, 'rb') as f:
             image_bytes = f.read()
         
-        image_part = {
-            "mime_type": image_mime_type,
-            "data": image_bytes
-        }
-
-        # Construct a prompt that asks for JSON output with a specific structure.
-        # Gemini doesn't have a direct json_schema enforcement like OpenAI's newer APIs (as of last check for generate_content directly for vision),
-        # so we rely on strong prompting for the JSON structure.
-        # We will request a JSON string and parse it.
+        # Use types.Part for image data with the new SDK
+        image_part = types.Part.from_data(mime_type=image_mime_type, data=image_bytes)
         
         # Define the expected JSON structure for the prompt
-        # This helps the model understand what we want.
-        example_json_output = json.dumps({"predicted_document_type": "ExampleType"})
-        
         prompt = (
             f"Analyze the document in the provided image and classify its type. "
-            f"Your response MUST be a single JSON object with exactly one key: 'predicted_document_type'. "
+            f"Your response MUST be a single JSON object. "
+            f"The JSON object must have exactly one key: 'predicted_document_type'. "
             f"The value for 'predicted_document_type' must be one of the following exact strings: {document_types}. "
-            f"For example, your response should look like this: {example_json_output}. "
+            f"If the document type is not clearly one of these, or if it's ambiguous, choose the closest match or 'Unknown' if that is an option. "
             f"Do not include any other text, explanations, or markdown formatting outside of this JSON object."
         )
         
-        print(f"[Gemini LOG] Sending prompt to Gemini: {prompt[:200]}...") # Log a snippet of the prompt
+        print(f"[GeminiClassifier LOG] Sending prompt to Gemini ({GEMINI_MODEL_ID}): {prompt[:200]}...")
 
-        # Using a model that supports vision. gemini-1.5-flash is a good general choice.
-        # The google_images.md doc refers to `gemini-2.0-flash` but that might be newer/experimental.
-        # Let's use `gemini-1.5-flash` which is widely available and good for vision.
-        model = genai.GenerativeModel(GEMINI_MODEL_ID) 
+        # The contents should be [prompt, image_part] or [image_part, prompt]
+        # For multimodal, common practice is often image first, then text prompt.
+        contents = [image_part, prompt] 
         
-        # The contents should be a list [image_part, prompt] or [prompt, image_part]
-        # Based on docs, text usually comes after the image for single image + text.
-        response = model.generate_content([image_part, prompt])
+        # Create GenerationConfig object - CHANGED TO GenerateContentConfig
+        generation_config = types.GenerateContentConfig(
+            temperature=0.2,
+            response_mime_type="application/json",
+            response_schema=GeminiDocTypeResponse
+        )
         
-        raw_response_text = response.text
-        print(f"[Gemini LOG] Raw response text: {raw_response_text}")
+        response = client.models.generate_content(
+            model=GEMINI_MODEL_ID,
+            contents=contents,
+            config=generation_config # Pass GenerationConfig object to 'config' parameter
+        )
+        
+        api_response_text = None
+        if response.text:
+            api_response_text = response.text
+            print(f"[GeminiClassifier LOG] Raw JSON response: {api_response_text}")
+            try:
+                # With response_schema, the response.text should be the JSON string.
+                # Validation against Pydantic model is good practice.
+                parsed_data = GeminiDocTypeResponse.model_validate_json(api_response_text)
+                predicted_type = parsed_data.predicted_document_type
 
-        # Attempt to strip markdown code fences if present
-        cleaned_response_text = raw_response_text.strip()
-        if cleaned_response_text.startswith("```json"):
-            cleaned_response_text = cleaned_response_text[len("```json"):].strip()
-        if cleaned_response_text.startswith("```"):
-            cleaned_response_text = cleaned_response_text[len("```"):].strip()
-        if cleaned_response_text.endswith("```"):
-            cleaned_response_text = cleaned_response_text[:-len("```")].strip()
-
-        try:
-            # The response.text should be the JSON string
-            parsed_json = json.loads(cleaned_response_text)
-            predicted_type = parsed_json.get("predicted_document_type")
-
-            if predicted_type and predicted_type in document_types:
-                return predicted_type
-            elif predicted_type:
-                print(f"Warning [Gemini]: Model returned a type '{predicted_type}' not in the allowed list: {document_types}. Raw JSON: {raw_response_text}")
+                if predicted_type and predicted_type in document_types:
+                    print(f"[GeminiClassifier LOG] Predicted type: {predicted_type}")
+                    return predicted_type
+                elif predicted_type:
+                    print(f"Warning [GeminiClassifier]: Model returned type '{predicted_type}' not in allowed list: {document_types}. Raw JSON: {api_response_text}")
+                    # Optionally, map to "Unknown" if that's a valid type and desired behavior
+                    if "Unknown" in document_types:
+                        return "Unknown"
+                    return None
+                else:
+                    print(f"Error [GeminiClassifier]: 'predicted_document_type' key missing or null in JSON response: {api_response_text}")
+                    return None
+            except Exception as pydantic_error:
+                print(f"Error [GeminiClassifier]: Pydantic validation/parsing failed: {pydantic_error}. Raw response: {api_response_text}")
                 return None
-            else:
-                print(f"Error [Gemini]: 'predicted_document_type' key missing in JSON response: {raw_response_text}")
-                return None
-        except json.JSONDecodeError as e:
-            print(f"Error [Gemini]: Decoding JSON response from API: {e}. Cleaned response: '{cleaned_response_text}'. Raw response: '{raw_response_text}'")
-            return None
-        except AttributeError:
-            # This can happen if response.text is not available (e.g. safety blocks)
+        else: # Fallback to check candidates if response.text is empty
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                 api_response_text = response.candidates[0].content.parts[0].text
+                 print(f"[GeminiClassifier LOG] Raw JSON response from candidate: {api_response_text}")
+                 try:
+                    parsed_data = GeminiDocTypeResponse.model_validate_json(api_response_text)
+                    predicted_type = parsed_data.predicted_document_type
+                    if predicted_type and predicted_type in document_types:
+                        print(f"[GeminiClassifier LOG] Predicted type (from candidate): {predicted_type}")
+                        return predicted_type
+                    # ... (similar handling as above for not in list or missing key)
+                 except Exception as pydantic_error:
+                    print(f"[GeminiClassifier ERROR] Pydantic validation failed (from candidate): {pydantic_error}. Raw response: {api_response_text}")
+                    return None
+
+            print(f"Error [GeminiClassifier]: No valid text in Gemini API response. Full response: {response}")
             if response.prompt_feedback and response.prompt_feedback.block_reason:
-                 print(f"Error [Gemini]: Request was blocked. Reason: {response.prompt_feedback.block_reason}")
-            else:
-                 print(f"Error [Gemini]: Could not extract text from Gemini response. Full response: {response}")
+                reason_name = response.prompt_feedback.block_reason.name if hasattr(response.prompt_feedback.block_reason, 'name') else response.prompt_feedback.block_reason
+                print(f"Error [GeminiClassifier]: Request was blocked. Reason: {reason_name}")
+            elif response.candidates and response.candidates[0].finish_reason.name != 'STOP':
+                reason_name = response.candidates[0].finish_reason.name
+                safety_ratings_str = str(response.candidates[0].safety_ratings)
+                print(f"Error [GeminiClassifier]: Did not finish successfully. Reason: {reason_name}. Details: {safety_ratings_str}")
             return None
 
     except Exception as e:
         print(f"An error occurred while calling the Gemini API or processing its response: {e}")
-        # You might want to inspect `e` further if it's a google.api_core.exceptions type for more details
         return None
 
 if __name__ == '__main__':
-    # This is a placeholder for direct testing. 
-    # Ensure GOOGLE_API_KEY is set in your environment.
-    # Replace with a valid path to a PNG image (as conversion is handled upstream)
-    
-    # Example 1: Test with a placeholder path (update to a real PNG image path)
-    sample_png_path = "path/to/your/converted_or_sample_image.png"
-    sample_mime_type = "image/png"
-    doc_types = ["Invoice", "Receipt", "Letter", "ID Card", "Unknown"]
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("\nSkipping direct tests for gemini_doc_classifier.py: GOOGLE_API_KEY not set.")
+    else:
+        # Create a dummy PNG file for testing if it doesn't exist
+        sample_png_path = "temp_gemini_test_image.png"
+        sample_mime_type = "image/png"
+        if not os.path.exists(sample_png_path):
+            try:
+                img = Image.new('RGB', (200, 100), color = 'blue')
+                img.save(sample_png_path)
+                print(f"Created dummy test image: {sample_png_path}")
+            except Exception as e:
+                print(f"Could not create dummy image: {e}. Please ensure Pillow is installed.")
+        
+        doc_types = ["Invoice", "Receipt", "Letter", "ID Card", "Passport", "Report", "Unknown"]
 
-    if os.environ.get("GOOGLE_API_KEY"):
         if os.path.exists(sample_png_path):
             print(f"\n--- Test Case 1: Classifying '{sample_png_path}' ---")
             classification = classify_image_with_gemini(sample_png_path, sample_mime_type, doc_types)
             print(f"Predicted Document Type (Gemini): {classification}")
-        else:
-            print(f"\nSkipping Test Case 1: Sample PNG file not found at '{sample_png_path}'. Please update the path.")
-        
-        # Example 2: Test with a different set of document types
-        # (You can use the same image or a different one)
-        if os.path.exists(sample_png_path): # Re-use image if it exists
-            print(f"\n--- Test Case 2: Classifying '{sample_png_path}' with different categories ---")
-            alt_doc_types = ["Passport", "Driver License", "Contract", "Report"]
-            classification_alt = classify_image_with_gemini(sample_png_path, sample_mime_type, alt_doc_types)
-            print(f"Predicted Document Type (Gemini, alt categories): {classification_alt}")
+            
+            print(f"\n--- Test Case 2: Classifying with a more restrictive list ---")
+            restricted_types = ["Invoice", "Receipt"]
+            classification_restricted = classify_image_with_gemini(sample_png_path, sample_mime_type, restricted_types)
+            print(f"Predicted Document Type (Gemini, restricted): {classification_restricted}")
 
-        # Example 3: Test with empty document types (should be handled)
+        # Test with empty document types
         print("\n--- Test Case 3: Empty document types list (should return None) ---")
         classification_empty = classify_image_with_gemini(sample_png_path, sample_mime_type, [])
         print(f"Predicted Document Type (Gemini, empty types): {classification_empty}")
-    else:
-        print("\nSkipping direct tests for gemini_doc_classifier.py: GOOGLE_API_KEY not set.") 
+
+        # Clean up dummy file
+        if os.path.exists(sample_png_path):
+            try:
+                os.remove(sample_png_path)
+                print(f"Removed dummy test image: {sample_png_path}")
+            except OSError as e:
+                print(f"Error removing dummy test image {sample_png_path}: {e}") 

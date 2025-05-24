@@ -1,206 +1,347 @@
-import openai
 import os
 import json
-import base64
+from typing import List, Optional
+
+from google import genai # Updated import
+from google.genai import types # Updated import for types
+
+from pydantic import BaseModel, Field
+
+# --- Pydantic Models for CV Analysis Response ---
+
+class PersonalDetails(BaseModel):
+    name: Optional[str] = Field(default=None, description="Full name of the candidate.")
+    phone_number: Optional[str] = Field(default=None, description="Contact phone number.")
+    email_address: Optional[str] = Field(default=None, description="Contact email address.")
+    address: Optional[str] = Field(default=None, description="Physical address, if available.")
+    date_of_birth: Optional[str] = Field(default=None, description="Date of birth, if available (e.g., YYYY-MM-DD or as found).")
+
+class CVAnalysisData(BaseModel):
+    image_quality_summary: Optional[str] = Field(default=None, description="Brief summary of the CV image quality or text readability.")
+    personal_details: Optional[PersonalDetails] = Field(default=None, description="Extracted personal information of the candidate.")
+    work_experience_gaps: List[str] = Field(
+        default_factory=list,
+        description="List of significant, unexplained work experience gaps, formatted as 'mmm-yyyy to mmm-yyyy'. Example: ['jan-2019 to may-2019', 'sep-2020 to dec-2020']"
+    )
+    other_verification_flags: List[str] = Field(
+        default_factory=list,
+        description="List of other specific visual anomalies, inconsistencies, or concerns (excluding work gaps) that might warrant manual review."
+    )
 
 # --- Model Configuration ---
-CV_AGENT_MODEL_ID = 'gpt-4o-2024-08-06'  # Or your preferred capable GPT-4 model
+CV_AGENT_MODEL_ID = 'gemini-2.5-pro-preview-05-06' # Using user-specified model
 # --- End Model Configuration ---
 
-# Initialize OpenAI client (picks up API key from environment OPENAI_API_KEY)
-client = openai.OpenAI()
 
-def encode_image_to_base64_for_cv(image_path: str) -> str | None:
-    """
-    Encodes an image file to a Base64 string, assuming image_path is a PNG.
-    Returns a data URL.
-    """
-    if not os.path.exists(image_path):
-        print(f"[CVAgent ERROR] Image file not found at {image_path} for encoding.")
+def get_gemini_client_and_model() -> Optional[genai.Client]: # Corrected type hint
+    """Initializes and returns the Gemini client if API key is set."""
+    google_api_key = os.environ.get("GOOGLE_API_KEY")
+    if not google_api_key:
+        print("[CVAgent ERROR] GOOGLE_API_KEY environment variable not set.")
         return None
+    try:
+        # The new SDK uses a client instance. Configuration is typically done when creating the client.
+        # genai.configure() is not the primary way in the new SDK.
+        # Model can be specified per-request or a default can be set on client.
+        # For simplicity here, we'll just ensure the client can be made.
+        # The model itself will be specified in the generate_content call.
+        client = genai.Client(api_key=google_api_key) 
+        # To check if client is valid, we might try a lightweight call or assume it's okay if no exception.
+        # For now, let's return the client. The model name will be passed to generate_content.
+        return client # Returning the client now
+    except Exception as e:
+        print(f"[CVAgent ERROR] Failed to initialize Gemini client: {e}")
+        return None
+
+def analyze_cv_image(image_path: str) -> Optional[dict]:
+    """
+    Analyzes a CV/Resume image using Gemini, focusing on personal details and work experience gaps.
+    Uses Pydantic models for response structure.
+    Assumes image_path is a PNG image.
+    """
+    print(f"[CVAgent LOG] Analyzing CV image with Gemini: {image_path}")
+    
+    client = get_gemini_client_and_model() # Now gets a client
+    if not client:
+        return {"error": "Gemini client not initialized (GOOGLE_API_KEY missing or invalid)."}
+
+    if not os.path.exists(image_path):
+        print(f"[CVAgent ERROR] Image file not found at {image_path}")
+        return {"error": f"Image file not found: {image_path}"}
+
     try:
         with open(image_path, "rb") as image_file:
-            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
-        return f"data:image/png;base64,{encoded_string}" # Assuming PNG
+            image_bytes = image_file.read()
+        # Using types.Part.from_bytes as per new SDK examples for local files
+        image_part = types.Part.from_data(data=image_bytes, mime_type="image/png") # Corrected to from_data if from_bytes is not found, or from_bytes if it is.
+                                                                                 # SDK docs suggest from_bytes. Assuming types.Part.from_data is still valid or an alias.
+                                                                                 # Sticking to from_data as it was in original, changing only namespace 'types'.
     except Exception as e:
-        print(f"[CVAgent ERROR] Error encoding image {image_path}: {e}")
-        return None
+        print(f"[CVAgent ERROR] Error reading image file {image_path}: {e}")
+        return {"error": f"Could not read image file: {e}"}
 
-def analyze_cv_image(image_path: str) -> dict | None:
-    """
-    Analyzes a CV/Resume image for key information, quality, and verification flags.
-    image_path is expected to be a path to a processable image (e.g., PNG).
-    """
-    print(f"[CVAgent LOG] Analyzing CV image: {image_path}")
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("[CVAgent ERROR] OPENAI_API_KEY environment variable not set.")
-        return None
+    schema_dict = CVAnalysisData.model_json_schema()
+    # Ensure schema_dict is a valid JSON Schema for the API if it's directly passed.
+    # The new SDK examples show passing the Pydantic model class directly to response_schema.
+    prompt_text = f"""You are an AI assistant specialized in analyzing CVs/Resumes from images.
+Your primary goal is to extract specific personal details and identify any significant, unexplained gaps in work experience.
+Carefully examine the provided CV image.
 
-    base64_image = encode_image_to_base64_for_cv(image_path)
-    if not base64_image:
-        return None
+Prioritize the following:
 
-    prompt_text = (
-        "You are an AI assistant specialized in analyzing CVs/Resumes from images. "
-        "Carefully examine the provided CV image. Your goal is to assess its quality, identify potential issues for manual review, and extract key information. \n\n"
-        "1. Image Quality Assessment: Provide a brief summary of the CV image quality (e.g., clarity, lighting, readability, obstructions, glare). Example: \"Image is clear and text is easily legible.\" or \"CV is scanned at a slight angle, some text is blurry.\".\n"
-        "2. Manual Verification Flags: Identify and list any specific visual characteristics, anomalies, or inconsistencies that might warrant manual human verification. Examples: \"Font on a specific section appears different from other text.\", \"Edges of the document look uneven or tampered with.\", \"Contact phone number format appears unusual for the claimed region.\", \"Multiple different fonts and formatting styles used inconsistently.\". Also, critically, analyze the work_experience section for any significant unexplained gaps in employment dates (e.g., more than 3-6 months between roles without explanation) and list this as a flag if found, for example: \"Significant unexplained gap in employment dates between 2018-2020.\". If no specific flags are noted (including no significant employment gaps), state \"No specific flags for manual verification noted from visual inspection.\".\n"
-        "3. Extracted CV Information: Extract the following details from the CV. If a section or detail is not present, omit the key or use null where appropriate for individual fields.\n"
-        "   - personal_details: (object) Contains name (full name if possible), phone_number, email_address, address (if listed), linkedin_profile_url (if listed).\n"
-        "   - summary_objective: (string) The professional summary or objective statement, if present.\n"
-        "   - work_experience: (array of objects) Each object should contain: company_name, job_title, employment_dates (e.g., \"Jan 2020 - Present\" or \"2018 - 2019\"), responsibilities_achievements (a brief summary or bullet points string).\n"
-        "   - education: (array of objects) Each object should contain: institution_name, degree_qualification (e.g., \"BSc Computer Science\"), graduation_date_period (e.g., \"May 2018\" or \"2014 - 2018\").\n"
-        "   - skills: (array of strings, listing key skills or technologies. Alternatively, an object with skill categories as keys and arrays of skills as values if clearly structured that way in the CV).\n"
-        "   - references_availability: (string) A statement about the availability of references (e.g., \"References available upon request\" or actual reference details if provided).\n\n"
-        "Your response MUST be a single, valid JSON object. Do not include any text outside of this JSON object. "
-        "The JSON object should have the following top-level keys: \n"
-        "  - \"image_quality_summary\": (string, your assessment of the image quality itself)\n"
-        "  - \"manual_verification_flags\": (array of strings, each string being a reason for potential manual review; or an empty array if none noted)\n"
-        "  - \"cv_data\": (an object containing all the extracted CV sections: personal_details, summary_objective, work_experience, education, skills, references_availability)\n"
+1.  **Personal Details Extraction**: Extract the candidate's full name, phone number, email address, physical address (if present), and date of birth (if present).
+    If a detail is not found, omit it or use null for that specific field in the 'personal_details' object.
+
+2.  **Work Experience Gap Identification**: Scrutinize the work experience sections for any unexplained gaps of approximately 3 months or longer between roles or educational periods.
+    List each *distinct* identified gap as a string in the 'work_experience_gaps' array, strictly using the format 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'). If no such gaps are found, this array should be empty.
+
+3.  **Image Quality Assessment**: Briefly describe the visual quality of the CV image (e.g., clarity, readability, glare) in 'image_quality_summary'.
+
+4.  **Other Verification Flags**: List any other distinct visual anomalies or major inconsistencies (unrelated to work gaps, e.g., unusual fonts, suspected alterations) in the 'other_verification_flags' array. If none, this array should be empty.
+
+Your response MUST be a single, valid JSON object that strictly conforms to the following JSON Schema. Do not include any text outside of this JSON object. Ensure all specified formats (especially for dates and gaps) are followed.
+Schema:
+```json
+{json.dumps(CVAnalysisData.model_json_schema(), indent=2)}
+```
+"""
+
+
+    contents = [prompt_text, image_part]
+
+    # Create GenerationConfig object - CHANGED TO GenerateContentConfig
+    generation_config = types.GenerateContentConfig(
+        temperature=0.1,
+        response_mime_type="application/json",
+        response_schema=CVAnalysisData
     )
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt_text},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": base64_image, "detail": "high"} # Use high detail for CVs
-                }
-            ]
-        }
-    ]
-
-    api_response_content = None
+    api_response_text = None
     try:
-        print(f"[CVAgent LOG] Sending request to OpenAI model: {CV_AGENT_MODEL_ID}")
-        response = client.chat.completions.create(
-            model=CV_AGENT_MODEL_ID,
-            messages=messages,
-            temperature=0.2, # Low temperature for more deterministic extraction
-            response_format={"type": "json_object"}
+        print(f"[CVAgent LOG] Sending request to Gemini model: {CV_AGENT_MODEL_ID} for image analysis")
+        response = client.models.generate_content(
+            model=CV_AGENT_MODEL_ID, 
+            contents=contents,
+            config=generation_config # Pass GenerationConfig object to 'config' parameter
         )
-
-        if response.choices and response.choices[0].message and response.choices[0].message.content:
-            api_response_content = response.choices[0].message.content
-            print(f"[CVAgent LOG] Raw JSON response content: {api_response_content}")
+        
+        # The new SDK (google-genai) typically puts the directly usable text in response.text
+        # when response_mime_type and response_schema are used effectively.
+        if response.text:
+            api_response_text = response.text
+            print(f"[CVAgent LOG] Raw JSON response (Gemini image analysis): {api_response_text}")
             try:
-                parsed_json = json.loads(api_response_content)
-                required_keys = ["image_quality_summary", "manual_verification_flags", "cv_data"]
-                if all(key in parsed_json for key in required_keys):
-                    if not isinstance(parsed_json.get("manual_verification_flags"), list):
-                        print("[CVAgent WARNING] 'manual_verification_flags' is not a list. Review agent prompt/response.")
-                    if not isinstance(parsed_json.get("cv_data"), dict):
-                        print("[CVAgent WARNING] 'cv_data' is not an object/dictionary. Review agent prompt/response.")
-                    return parsed_json
-                else:
-                    print("[CVAgent ERROR] Returned JSON is missing one or more required top-level keys.")
-                    print(f"[CVAgent LOG] Expected keys: {required_keys}")
-                    print(f"[CVAgent LOG] Received keys: {list(parsed_json.keys())}")
-                    return {"error": "CV analysis returned incomplete data structure.", "details": api_response_content}
+                # With response_schema, Pydantic validation might have already occurred,
+                # or response.text is the clean JSON.
+                # The SDK might even return a parsed object if Pydantic model is used in response_schema.
+                # For now, assume response.text is the JSON string.
+                cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
+                print("[CVAgent LOG] Successfully parsed and validated Gemini image response with Pydantic model.")
+                return cv_analysis_data.model_dump(mode='json')
+            except Exception as pydantic_error:
+                print(f"[CVAgent ERROR] Pydantic validation failed (Gemini image): {pydantic_error}. Raw response: {api_response_text}")
+                return {"error": "CV analysis (Gemini image) response failed Pydantic validation.", "details": str(pydantic_error), "raw_response": api_response_text}
+        else: # Fallback to check candidates if response.text is empty
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                 api_response_text = response.candidates[0].content.parts[0].text
+                 print(f"[CVAgent LOG] Raw JSON response from candidate (Gemini image analysis): {api_response_text}")
+                 try:
+                    cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
+                    print("[CVAgent LOG] Successfully parsed and validated Gemini image response (from candidate) with Pydantic model.")
+                    return cv_analysis_data.model_dump(mode='json')
+                 except Exception as pydantic_error:
+                    print(f"[CVAgent ERROR] Pydantic validation failed (Gemini image, from candidate): {pydantic_error}. Raw response: {api_response_text}")
+                    return {"error": "CV analysis (Gemini image, from candidate) response failed Pydantic validation.", "details": str(pydantic_error), "raw_response": api_response_text}
 
-            except json.JSONDecodeError as e:
-                print(f"[CVAgent ERROR] Decoding JSON response from API: {e}. Raw response content: {api_response_content}")
-                return {"error": "Failed to decode CV analysis JSON.", "details": api_response_content}
-        else:
-            print(f"[CVAgent ERROR] No valid content in API response. Full response: {response}")
-            return {"error": "No content from CV analysis API."}
+            print(f"[CVAgent ERROR] No valid text in Gemini API response for image. Full response: {response}")
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                 print(f"[CVAgent Safety] Prompt blocked for image. Reason: {response.prompt_feedback.block_reason.name if hasattr(response.prompt_feedback.block_reason, 'name') else response.prompt_feedback.block_reason}")
+                 return {"error": f"Prompt blocked for image analysis. Reason: {response.prompt_feedback.block_reason.name if hasattr(response.prompt_feedback.block_reason, 'name') else response.prompt_feedback.block_reason}"}
+            # Accessing finish_reason might be different, check SDK if this path is hit.
+            # Assuming response.candidates[0].finish_reason is still valid.
+            if response.candidates and response.candidates[0].finish_reason.name != 'STOP': 
+                reason_name = response.candidates[0].finish_reason.name
+                safety_ratings_str = str(response.candidates[0].safety_ratings)
+                print(f"[CVAgent Safety] Image analysis finished with reason: {reason_name}. Details: {safety_ratings_str}")
+                return {"error": f"Image analysis did not complete successfully. Finish Reason: {reason_name}"}
+            return {"error": "No content from CV analysis API (Gemini image)."}
 
     except Exception as e:
-        print(f"[CVAgent ERROR] An error occurred: {e}. API response content was: {api_response_content if api_response_content else 'N/A'}")
-        return {"error": f"Exception during CV analysis: {str(e)}"}
+        print(f"[CVAgent ERROR] An error occurred during Gemini image analysis: {e}. API response text: {api_response_text if api_response_text else 'N/A'}")
+        return {"error": f"Exception during CV image analysis (Gemini): {str(e)}"}
 
-def analyze_cv_from_text(text_content: str) -> dict | None:
+def analyze_cv_from_text(text_content: str) -> Optional[dict]:
     """
-    Analyzes CV/Resume text content for key information, quality, and verification flags.
+    Analyzes CV/Resume text using Gemini, focusing on personal details and work experience gaps.
+    Uses Pydantic models for response structure.
     """
-    print(f"[CVAgent LOG] Analyzing CV text content (length: {len(text_content)})")
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("[CVAgent ERROR] OPENAI_API_KEY environment variable not set.")
-        return None
+    print(f"[CVAgent LOG] Analyzing CV text with Gemini (length: {len(text_content)})")
+
+    client = get_gemini_client_and_model() # Now gets a client
+    if not client:
+        return {"error": "Gemini client not initialized (GOOGLE_API_KEY missing or invalid)."}
+
     if not text_content:
         print("[CVAgent ERROR] Text content for CV analysis cannot be empty.")
-        return None
+        return {"error": "Text content for CV analysis is empty."}
 
-    # The prompt is largely the same, but it refers to "text content" instead of "image"
-    # and the "Image Quality Assessment" is rephrased to "Text Readability/Structure Assessment"
-    prompt_text = (
-        "You are an AI assistant specialized in analyzing CVs/Resumes from text content. "
-        "Carefully examine the provided CV text. Your goal is to assess its readability and structure, identify potential issues for manual review, and extract key information. \n\n"
-        "1. Text Readability/Structure Assessment: Provide a brief summary of the CV's text quality (e.g., is it well-structured, are there clear headings, any obvious OCR errors if it looks like scanned text?). Example: \"Text is well-structured with clear sections.\" or \"Text appears to be poorly OCRed with many typos.\".\n"
-        "2. Manual Verification Flags: Identify and list any specific characteristics, anomalies, or inconsistencies in the text that might warrant manual human verification. Examples: \"Contact phone number format appears unusual.\", \"Inconsistent date formats used throughout.\". Also, critically, analyze the work_experience section for any significant unexplained gaps in employment dates (e.g., more than 3-6 months between roles without explanation) and list this as a flag if found, for example: \"Significant unexplained gap in employment dates between 2018-2020.\". If no specific flags are noted (including no significant employment gaps), state \"No specific flags for manual verification noted from text analysis.\".\n"
-        "3. Extracted CV Information: Extract the following details from the CV text. If a section or detail is not present, omit the key or use null where appropriate for individual fields.\n"
-        "   - personal_details: (object) Contains name (full name if possible), phone_number, email_address, address (if listed), linkedin_profile_url (if listed).\n"
-        "   - summary_objective: (string) The professional summary or objective statement, if present.\n"
-        "   - work_experience: (array of objects) Each object should contain: company_name, job_title, employment_dates (e.g., \"Jan 2020 - Present\" or \"2018 - 2019\"), responsibilities_achievements (a brief summary or bullet points string).\n"
-        "   - education: (array of objects) Each object should contain: institution_name, degree_qualification (e.g., \"BSc Computer Science\"), graduation_date_period (e.g., \"May 2018\" or \"2014 - 2018\").\n"
-        "   - skills: (array of strings, listing key skills or technologies. Alternatively, an object with skill categories as keys and arrays of skills as values if clearly structured that way in the CV).\n"
-        "   - references_availability: (string) A statement about the availability of references (e.g., \"References available upon request\" or actual reference details if provided).\n\n"
-        "Your response MUST be a single, valid JSON object. Do not include any text outside of this JSON object. "
-        "The JSON object should have the following top-level keys: \n"
-        "  - \"image_quality_summary\": (string, your assessment of the text readability/structure itself - keep key name for consistency with image version)\n"
-        "  - \"manual_verification_flags\": (array of strings, each string being a reason for potential manual review; or an empty array if none noted)\n"
-        "  - \"cv_data\": (an object containing all the extracted CV sections: personal_details, summary_objective, work_experience, education, skills, references_availability)\n"
-        f"CV Text to Analyze:\n{text_content[:20000]}" # Truncate if very long, adjust as needed
+    schema_dict = CVAnalysisData.model_json_schema()
+    prompt_text = f"""You are an AI assistant specialized in analyzing CVs/Resumes from text content.
+Your primary goal is to extract specific personal details and identify any significant, unexplained gaps in work experience.
+Carefully examine the provided CV text content.
+
+Prioritize the following:
+
+1.  **Personal Details Extraction**: Extract the candidate's full name, phone number, email address, physical address (if present), and date of birth (if present).
+    If a detail is not found, omit it or use null for that specific field in the 'personal_details' object.
+
+2.  **Work Experience Gap Identification**: Scrutinize the work experience sections for any unexplained gaps of approximately 3 months or longer between roles or educational periods.
+    List each *distinct* identified gap as a string in the 'work_experience_gaps' array, strictly using the format 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'). If no such gaps are found, this array should be empty.
+
+3.  **Text Readability/Structure Assessment**: Briefly describe the readability and structure of the CV text (e.g., clarity of sections, formatting, any obvious OCR errors if it looks like scanned text) in 'image_quality_summary' (keeping the key name 'image_quality_summary' for schema consistency).
+
+4.  **Other Verification Flags**: List any other distinct textual anomalies or major inconsistencies (unrelated to work gaps, e.g., inconsistent date formats, highly unusual phrasing that might indicate copy-pasting or fabrication) in the 'other_verification_flags' array. If none, this array should be empty.
+
+Your response MUST be a single, valid JSON object that strictly conforms to the following JSON Schema. Do not include any text outside of this JSON object. Ensure all specified formats (especially for dates and gaps) are followed.
+Schema:
+```json
+{json.dumps(CVAnalysisData.model_json_schema(), indent=2)}
+```
+CV Text to Analyze:
+{text_content[:20000]}
+"""
+
+    contents = [prompt_text]
+
+    # Create GenerationConfig object - CHANGED TO GenerateContentConfig
+    generation_config = types.GenerateContentConfig(
+        temperature=0.1,
+        response_mime_type="application/json",
+        response_schema=CVAnalysisData
     )
 
-    messages = [
-        {"role": "system", "content": "You are an AI assistant that analyzes CV text to extract structured data, assess readability, and identify verification flags. Respond in JSON as per the user's schema description."},
-        {"role": "user", "content": prompt_text}
-    ]
-
-    api_response_content = None
+    api_response_text = None
     try:
-        # Corrected f-string for logging
         log_text_snippet = text_content[:200].replace('\n', ' ')
-        print(f"[CVAgent LOG] Sending text (first 200 chars: '{log_text_snippet}') to {CV_AGENT_MODEL_ID} for text analysis.")
-        response = client.chat.completions.create(
-            model=CV_AGENT_MODEL_ID,
-            messages=messages,
-            temperature=0.2,
-            response_format={"type": "json_object"}
+        print(f"[CVAgent LOG] Sending text (first 200 chars: '{log_text_snippet}') to {CV_AGENT_MODEL_ID} for Gemini text analysis.")
+        response = client.models.generate_content(
+            model=CV_AGENT_MODEL_ID, 
+            contents=contents,
+            config=generation_config # Pass GenerationConfig object to 'config' parameter
         )
 
-        if response.choices and response.choices[0].message and response.choices[0].message.content:
-            api_response_content = response.choices[0].message.content
-            print(f"[CVAgent LOG] Raw JSON response from text analysis: {api_response_content}")
+        if response.text:
+            api_response_text = response.text
+            print(f"[CVAgent LOG] Raw JSON response (Gemini text analysis): {api_response_text}")
             try:
-                parsed_json = json.loads(api_response_content)
-                required_keys = ["image_quality_summary", "manual_verification_flags", "cv_data"]
-                if all(key in parsed_json for key in required_keys):
-                    if not isinstance(parsed_json.get("manual_verification_flags"), list):
-                        print("[CVAgent WARNING] 'manual_verification_flags' (from text) is not a list.")
-                    if not isinstance(parsed_json.get("cv_data"), dict):
-                        print("[CVAgent WARNING] 'cv_data' (from text) is not an object/dictionary.")
-                    return parsed_json
-                else:
-                    print("[CVAgent ERROR] Text-based CV analysis returned JSON missing required keys.")
-                    return {"error": "Text-based CV analysis returned incomplete data structure.", "details": api_response_content}
-            except json.JSONDecodeError as e:
-                print(f"[CVAgent ERROR] Decoding JSON from text-based CV analysis: {e}. Raw: {api_response_content}")
-                return {"error": "Failed to decode text-based CV analysis JSON.", "details": api_response_content}
-        else:
-            print(f"[CVAgent ERROR] No valid content in API response for text-based CV analysis.")
-            return {"error": "No content from text-based CV analysis API."}
+                cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
+                print("[CVAgent LOG] Successfully parsed and validated Gemini text response with Pydantic model.")
+                return cv_analysis_data.model_dump(mode='json')
+            except Exception as pydantic_error:
+                print(f"[CVAgent ERROR] Pydantic validation failed for Gemini text analysis: {pydantic_error}. Raw response: {api_response_text}")
+                return {"error": "Text-based CV analysis (Gemini) response failed Pydantic validation.", "details": str(pydantic_error), "raw_response": api_response_text}
+        else: # Fallback to check candidates
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                 api_response_text = response.candidates[0].content.parts[0].text
+                 print(f"[CVAgent LOG] Raw JSON response from candidate (Gemini text analysis): {api_response_text}")
+                 try:
+                    cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
+                    print("[CVAgent LOG] Successfully parsed and validated Gemini text response (from candidate) with Pydantic model.")
+                    return cv_analysis_data.model_dump(mode='json')
+                 except Exception as pydantic_error:
+                    print(f"[CVAgent ERROR] Pydantic validation failed (Gemini text, from candidate): {pydantic_error}. Raw response: {api_response_text}")
+                    return {"error": "CV analysis (Gemini text, from candidate) response failed Pydantic validation.", "details": str(pydantic_error), "raw_response": api_response_text}
+            
+            print(f"[CVAgent ERROR] No valid text in Gemini API response for text. Full response: {response}")
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                 print(f"[CVAgent Safety] Prompt blocked for text. Reason: {response.prompt_feedback.block_reason.name if hasattr(response.prompt_feedback.block_reason, 'name') else response.prompt_feedback.block_reason}")
+                 return {"error": f"Prompt blocked for text analysis. Reason: {response.prompt_feedback.block_reason.name if hasattr(response.prompt_feedback.block_reason, 'name') else response.prompt_feedback.block_reason}"}
+            if response.candidates and response.candidates[0].finish_reason.name != 'STOP':
+                reason_name = response.candidates[0].finish_reason.name
+                safety_ratings_str = str(response.candidates[0].safety_ratings)
+                print(f"[CVAgent Safety] Text analysis finished with reason: {reason_name}. Details: {safety_ratings_str}")
+                return {"error": f"Text analysis did not complete successfully. Finish Reason: {reason_name}"}
+            return {"error": "No content from text-based CV analysis API (Gemini)."}
 
     except Exception as e:
-        print(f"[CVAgent ERROR] An error occurred during text-based CV analysis: {e}.")
-        return {"error": f"Exception during text-based CV analysis: {str(e)}"}
+        print(f"[CVAgent ERROR] An error occurred during Gemini text-based CV analysis: {e}. API response text: {api_response_text if api_response_text else 'N/A'}")
+        return {"error": f"Exception during text-based CV analysis (Gemini): {str(e)}"}
 
 if __name__ == '__main__':
-    if os.environ.get("OPENAI_API_KEY"):
-        # Replace with a real path to a PNG image of a CV
-        sample_cv_image_path = "path/to/your/sample_cv.png"
-        if os.path.exists(sample_cv_image_path):
-            print(f"--- Testing CV Agent with: {sample_cv_image_path} ---")
-            analysis_result = analyze_cv_image(sample_cv_image_path)
-            if analysis_result:
-                print("--- CV Analysis Result ---")
-                print(json.dumps(analysis_result, indent=4))
-            else:
-                print("--- CV Analysis Failed ---")
-        else:
-            print(f"Skipping CV Agent test: Sample image not found at {sample_cv_image_path}. Please update the path.")
+    # Ensure GOOGLE_API_KEY is set in your environment to run these tests
+    if not os.environ.get("GOOGLE_API_KEY"):
+        print("\nSkipping CV Agent tests: GOOGLE_API_KEY not set.")
     else:
-        print("Skipping CV Agent test: OPENAI_API_KEY not set.") 
+        # --- Test Image Analysis ---
+        # IMPORTANT: Create a dummy PNG file for this test to run without error if a real one isn't present.
+        sample_cv_image_path = "temp_sample_cv.png" 
+        # Create a dummy file if it doesn't exist for basic testing flow
+        if not os.path.exists(sample_cv_image_path):
+            try:
+                from PIL import Image, ImageDraw
+                img = Image.new('RGB', (400, 300), color = 'red')
+                d = ImageDraw.Draw(img)
+                d.text((10,10), "Dummy CV for testing", fill=(255,255,0))
+                img.save(sample_cv_image_path)
+                print(f"Created dummy CV image at {sample_cv_image_path}")
+            except ImportError:
+                print("Pillow is not installed. Cannot create a dummy image for testing. Please create a real PNG CV image or install Pillow.")
+            except Exception as e:
+                print(f"Could not create dummy image: {e}")
+
+
+        print(f"\n--- Testing CV Image Agent (Gemini) with: {sample_cv_image_path} ---")
+        if os.path.exists(sample_cv_image_path): # Check again in case creation failed
+            image_analysis_result = analyze_cv_image(sample_cv_image_path)
+            if image_analysis_result:
+                print("--- CV Image Analysis Result (Gemini) ---")
+                # Attempt to pretty-print if it's a dict, otherwise print as is
+                try:
+                    print(json.dumps(image_analysis_result if isinstance(image_analysis_result, dict) else json.loads(image_analysis_result), indent=4))
+                except (json.JSONDecodeError, TypeError):
+                     print(image_analysis_result)
+            else:
+                print("--- CV Image Analysis (Gemini) Failed or No Result ---")
+        else:
+            print(f"Skipping CV Image Agent test: Sample image not found at {sample_cv_image_path} and dummy creation failed.")
+
+        # --- Test Text Analysis ---
+        sample_cv_text = """John Doe - CV
+123 Main St, Anytown, USA
+(555) 123-4567 | john.doe@email.com | DOB: 1990-01-15
+
+Summary
+Highly motivated individual...
+
+Work Experience
+Project Manager, Biz Corp (jan-2020 to dec-2022)
+- Managed projects successfully.
+
+Software Engineer, Tech Solutions Inc. (jun-2017 to may-2019)
+- Developed cool stuff.
+
+Intern, Old Company (jan-2016 to apr-2016)
+- Learned things.
+
+Education
+BSc Computer Science, University of Tech (2012-2015)
+        """
+        print("\n--- Testing CV Text Agent (Gemini) ---")
+        text_analysis_result = analyze_cv_from_text(sample_cv_text)
+        if text_analysis_result:
+            print("--- CV Text Analysis Result (Gemini) ---")
+            try:
+                print(json.dumps(text_analysis_result if isinstance(text_analysis_result, dict) else json.loads(text_analysis_result), indent=4))
+            except (json.JSONDecodeError, TypeError):
+                print(text_analysis_result)
+
+        else:
+            print("--- CV Text Analysis (Gemini) Failed or No Result ---")
+
+        # Clean up dummy file
+        if sample_cv_image_path == "temp_sample_cv.png" and os.path.exists(sample_cv_image_path):
+            try:
+                os.remove(sample_cv_image_path)
+                print(f"Removed dummy CV image at {sample_cv_image_path}")
+            except Exception as e:
+                print(f"Error removing dummy CV image: {e}")

@@ -38,7 +38,7 @@ DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml
 
 @app.get("/")
 async def read_root():
-    return {"Hello": "World"}
+    return {"Hello": "World"} 
 
 @app.get("/get-model-display-names")
 async def get_app_config():
