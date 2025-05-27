@@ -26,16 +26,23 @@ from classifier_agents.gemini_doc_classifier import classify_document_with_gemin
 from classifier_agents.gemini_doc_classifier import GEMINI_FRIENDLY_NAME
 from classifier_agents.text_doc_classifier import extract_text_from_docx, extract_text_from_document, classify_text_document_type
 
-# Verification Agents (TEMPORARILY DISABLED FOR TESTING)
+# Verification Agents
 # from verification_agents.passport_agent import analyze_passport_image
 # from verification_agents.cv_agent import analyze_cv_image, analyze_cv_from_text
 # from verification_agents.driving_licence_agent import analyze_driving_licence_image
-# from verification_agents.bank_statement_agent import analyze_bank_statement_image, analyze_bank_statement_pdf
+from verification_agents.bank_statement_agent import analyze_bank_statement_image, analyze_bank_statement_pdf
 
 app = FastAPI()
 
 # Define a list of possible document types your agent can classify
-POSSIBLE_DOC_TYPES = ["Bank Statement", "Utility Bill", "Council Tax Bill", "CV", "P45", "P60", "NI Letter", "Pay Slip", "Passport", "Right To Work Share Code", "DBS Certificate", "Police Check Certificate", "Drivers Licence", "Training Certificate", "Birth Certificate", "HMRC Letter", "DWP Letter", "Other", "Letter", "Report", "Invoice"]
+POSSIBLE_DOC_TYPES = [
+    "Bank Statement", "Credit Card Statement", "Mortgage Statement", "Loan Statement", 
+    "Investment Statement", "Utility Bill", "Council Tax Bill", "CV", "P45", "P60", 
+    "NI Letter", "Pay Slip", "Passport", "Right To Work Share Code", "DBS Certificate", 
+    "Police Check Certificate", "Drivers Licence", "Training Certificate", "Birth Certificate", 
+    "HMRC Letter", "DWP Letter", "Receipt", "Invoice", "Contract", "Insurance Document", 
+    "Medical Document", "Other", "Letter", "Report"
+]
 
 # Create a temporary directory for uploads if it doesn't exist
 UPLOAD_DIR = "temp_uploads"
@@ -168,9 +175,46 @@ async def classify_document_endpoint(file: UploadFile = File(...),
             "bank_statement_analysis": None   # Add new key for bank statement
         }
 
-        # --- Specialized Agent Processing (TEMPORARILY DISABLED FOR TESTING) ---
-        print(f"⏭️ AGENTS SKIPPED: Testing classification only")
-        # TODO: Re-enable agent processing after classification testing is complete
+        # --- Specialized Agent Processing ---
+        print("🔍 AGENT ROUTING: Checking for specialized analysis...")
+        
+        if classification_result == "Bank Statement":
+            print("🏦 BANK STATEMENT AGENT: Starting financial analysis...")
+            
+            # Determine which function to use based on file type
+            if is_text_file:
+                print("⚠️ BANK STATEMENT AGENT: Text files not supported - requires image/PDF")
+                final_response_content["bank_statement_analysis"] = {
+                    "error": "Bank statement analysis requires image or PDF format",
+                    "details": "Text files (.docx, .txt) cannot be processed by the bank statement agent"
+                }
+            else:
+                # Use appropriate function based on MIME type
+                if file_mime_type == "application/pdf":
+                    print(f"📄 BANK STATEMENT AGENT: Processing PDF → {path_for_further_processing}")
+                    bank_analysis = analyze_bank_statement_pdf(path_for_further_processing)
+                else:
+                    print(f"🖼️ BANK STATEMENT AGENT: Processing image → {path_for_further_processing}")
+                    bank_analysis = analyze_bank_statement_image(path_for_further_processing)
+                
+                if bank_analysis:
+                    if "error" in bank_analysis:
+                        print(f"❌ BANK STATEMENT AGENT: Analysis failed → {bank_analysis.get('error', 'Unknown error')}")
+                    else:
+                        # Count transactions for logging
+                        transaction_count = len(bank_analysis.get('transactions', []))
+                        total_in = bank_analysis.get('total_paid_in', 0)
+                        total_out = bank_analysis.get('total_paid_out', 0)
+                        print(f"✅ BANK STATEMENT AGENT: Analysis complete → {transaction_count} transactions, £{total_in:.2f} in, £{total_out:.2f} out")
+                    
+                    final_response_content["bank_statement_analysis"] = bank_analysis
+                else:
+                    print("❌ BANK STATEMENT AGENT: No response from analysis")
+                    final_response_content["bank_statement_analysis"] = {
+                        "error": "Bank statement analysis returned no data"
+                    }
+        else:
+            print(f"⏭️ AGENT ROUTING: No specialized agent for '{classification_result}' - classification only")
 
         print("-" * 80)
         print(f"✅ PROCESSING COMPLETE: {file.filename} → {classification_result}")

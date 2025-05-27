@@ -52,7 +52,7 @@ def upload_file():
         
         try:
             print(f"Forwarding to backend. Detail: {detail}, AI Provider: {ai_provider}, File: {file.filename}")
-            response = requests.post(FASTAPI_BACKEND_URL_CLASSIFY, files=files, data=payload, timeout=180) # Use specific URL for classification
+            response = requests.post(FASTAPI_BACKEND_URL_CLASSIFY, files=files, data=payload, timeout=300) # Increased to 5 minutes for large documents
             response.raise_for_status()
             
             # Assuming the backend returns JSON with 'document_type' and 'filename'

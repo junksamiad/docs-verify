@@ -379,6 +379,86 @@
             return html;
         }
 
+        function formatBankStatementDataAsMarkdown(bsData) {
+            if (!bsData) return '';
+
+            let html = '<ul style="list-style-type: none; padding-left: 0;">';
+
+            // Handle errors first
+            if (bsData.error) {
+                html += `<li><strong>Error:</strong> ${escapeHtml(bsData.error)}</li>`;
+                if (bsData.details) {
+                    html += `<li><strong>Details:</strong> ${escapeHtml(bsData.details)}</li>`;
+                }
+                html += '</ul>';
+                return html;
+            }
+
+            // Account Information
+            if (bsData.name) {
+                html += `<li><strong>Account Holder:</strong> ${escapeHtml(bsData.name)}</li>`;
+            }
+            if (bsData.bank_provider) {
+                html += `<li><strong>Bank:</strong> ${escapeHtml(bsData.bank_provider)}</li>`;
+            }
+            if (bsData.sort_code) {
+                html += `<li><strong>Sort Code:</strong> ${escapeHtml(bsData.sort_code)}</li>`;
+            }
+            if (bsData.account_number) {
+                html += `<li><strong>Account Number:</strong> ${escapeHtml(bsData.account_number)}</li>`;
+            }
+            if (bsData.address) {
+                html += `<li><strong>Address:</strong> ${escapeHtml(bsData.address)}</li>`;
+            }
+
+            // Statement Period
+            if (bsData.statement_start_date && bsData.statement_end_date) {
+                const startDate = new Date(bsData.statement_start_date).toLocaleDateString();
+                const endDate = new Date(bsData.statement_end_date).toLocaleDateString();
+                html += `<li><strong>Statement Period:</strong> ${startDate} to ${endDate}</li>`;
+            }
+
+            // Financial Summary
+            if (bsData.total_paid_in !== null && bsData.total_paid_in !== undefined) {
+                html += `<li><strong>Total Paid In:</strong> £${bsData.total_paid_in.toFixed(2)}</li>`;
+            }
+            if (bsData.total_paid_out !== null && bsData.total_paid_out !== undefined) {
+                html += `<li><strong>Total Paid Out:</strong> £${bsData.total_paid_out.toFixed(2)}</li>`;
+            }
+
+            // Transactions
+            if (bsData.transactions && Array.isArray(bsData.transactions) && bsData.transactions.length > 0) {
+                html += `<li><strong>Transactions (${bsData.transactions.length}):</strong>`;
+                html += '<div style="margin-top: 10px; max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">';
+                html += '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
+                html += '<thead><tr style="background-color: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 4px; text-align: left;">Date</th><th style="border: 1px solid #ddd; padding: 4px; text-align: left;">Description</th><th style="border: 1px solid #ddd; padding: 4px; text-align: right;">Amount</th><th style="border: 1px solid #ddd; padding: 4px; text-align: center;">Type</th><th style="border: 1px solid #ddd; padding: 4px; text-align: left;">Category</th></tr></thead>';
+                html += '<tbody>';
+                
+                bsData.transactions.forEach(tx => {
+                    const date = tx.date ? new Date(tx.date).toLocaleDateString() : 'N/A';
+                    const amount = tx.amount !== null ? `£${tx.amount.toFixed(2)}` : 'N/A';
+                    const direction = tx.direction === 'paid_in' ? '↗️ In' : '↙️ Out';
+                    const category = tx.category ? tx.category.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'N/A';
+                    
+                    html += '<tr>';
+                    html += `<td style="border: 1px solid #ddd; padding: 4px;">${escapeHtml(date)}</td>`;
+                    html += `<td style="border: 1px solid #ddd; padding: 4px;">${escapeHtml(tx.description || 'N/A')}</td>`;
+                    html += `<td style="border: 1px solid #ddd; padding: 4px; text-align: right;">${escapeHtml(amount)}</td>`;
+                    html += `<td style="border: 1px solid #ddd; padding: 4px; text-align: center;">${direction}</td>`;
+                    html += `<td style="border: 1px solid #ddd; padding: 4px;">${escapeHtml(category)}</td>`;
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                html += '</div></li>';
+            } else {
+                html += '<li><strong>Transactions:</strong> No transactions found or provided.</li>';
+            }
+
+            html += '</ul>';
+            return html;
+        }
+
         function applyStylesToAnalysisBox(element) {
             element.style.maxHeight = '400px';
             element.style.overflowY = 'auto';
@@ -438,7 +518,7 @@
             if(cvActionsArea) cvActionsArea.style.display = 'none';
 
             submitButton.disabled = true;
-            submitButton.textContent = 'Classifying...';
+            submitButton.textContent = 'Processing... (Large documents may take up to 5 minutes)';
             
             // Start the timer
             startTimer();
@@ -550,6 +630,13 @@
                         applyStylesToAnalysisBox(passportContentDiv); // Apply common styles
                         passportDisplayArea.style.display = 'block'; // Make the area visible
                     }
+                    // Display Bank Statement Analysis if available
+                    else if (data.bank_statement_analysis) {
+                        const formattedHtml = formatBankStatementDataAsMarkdown(data.bank_statement_analysis);
+                        passportContentDiv.innerHTML = formattedHtml; // Re-using the same div
+                        applyStylesToAnalysisBox(passportContentDiv); // Apply common styles
+                        passportDisplayArea.style.display = 'block'; // Make the area visible
+                    }
 
                     // Show CV-specific actions if document is CV
                     if (data.document_type === "CV") {
@@ -558,60 +645,8 @@
                         if(cvActionsArea) cvActionsArea.style.display = 'none';
                     }
 
-                    let resultHtml = '';
-                    resultHtml += `<p><strong>Document Type:</strong> ${data.document_type}</p>`;
-                    resultHtml += `<p><strong>AI Provider:</strong> ${data.ai_provider || 'N/A'}</p>`;
-                    resultHtml += `<p><strong>Detail Used:</strong> ${data.detail_used || 'N/A'}</p>`;
-                    
-                    // Add processing time to results
-                    if (startTime) {
-                        const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
-                        resultHtml += `<p><strong>Processing Time:</strong> ${processingTime}s</p>`;
-                    }
-
-                    if (data.bank_statement_analysis) {
-                        let bsHtmlFragment = '<h3>Bank Statement Analysis (UK):</h3>'; // Changed variable name
-                        if (data.bank_statement_analysis.error) {
-                            bsHtmlFragment += `<p><strong>Error:</strong> ${data.bank_statement_analysis.error}</p>`;
-                            if (data.bank_statement_analysis.details) {
-                                 bsHtmlFragment += `<p><strong>Details:</strong> ${data.bank_statement_analysis.details}</p>`;
-                            }
-                        } else {
-                            // Display header info
-                            bsHtmlFragment += `<p><strong>Name:</strong> ${data.bank_statement_analysis.name || 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Bank:</strong> ${data.bank_statement_analysis.bank_provider || 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Sort Code:</strong> ${data.bank_statement_analysis.sort_code || 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Account Number:</strong> ${data.bank_statement_analysis.account_number || 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Address:</strong> ${data.bank_statement_analysis.address || 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Statement Period:</strong> ${data.bank_statement_analysis.statement_start_date || 'N/A'} to ${data.bank_statement_analysis.statement_end_date || 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Total Paid In:</strong> ${data.bank_statement_analysis.total_paid_in !== null ? data.bank_statement_analysis.total_paid_in.toFixed(2) : 'N/A'}</p>`;
-                            bsHtmlFragment += `<p><strong>Total Paid Out:</strong> ${data.bank_statement_analysis.total_paid_out !== null ? data.bank_statement_analysis.total_paid_out.toFixed(2) : 'N/A'}</p>`;
-                            
-                            // Display transactions in a table
-                            if (data.bank_statement_analysis.transactions && data.bank_statement_analysis.transactions.length > 0) {
-                                bsHtmlFragment += '<h4>Transactions:</h4>';
-                                bsHtmlFragment += '<table class="transactions-table">';
-                                bsHtmlFragment += '<thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Direction</th><th>Balance After</th><th>Category</th></tr></thead>';
-                                bsHtmlFragment += '<tbody>';
-                                data.bank_statement_analysis.transactions.forEach(tx => {
-                                    bsHtmlFragment += '<tr>';
-                                    bsHtmlFragment += `<td>${tx.date || 'N/A'}</td>`;
-                                    bsHtmlFragment += `<td>${tx.description || 'N/A'}</td>`;
-                                    bsHtmlFragment += `<td>${tx.amount !== null ? tx.amount.toFixed(2) : 'N/A'}</td>`;
-                                    bsHtmlFragment += `<td>${tx.direction || 'N/A'}</td>`;
-                                    bsHtmlFragment += `<td>${tx.balance_after !== null ? tx.balance_after.toFixed(2) : 'N/A'}</td>`;
-                                    bsHtmlFragment += `<td>${tx.category || 'N/A'}</td>`;
-                                    bsHtmlFragment += '</tr>';
-                                });
-                                bsHtmlFragment += '</tbody></table>';
-                            } else {
-                                bsHtmlFragment += '<p>No transactions found or provided.</p>';
-                            }
-                        }
-                        resultHtml += bsHtmlFragment; // Append bank statement analysis to general info
-                    }
-
-                    resultArea.innerHTML = resultHtml; // Display general info and all appended analysis sections
+                    // No need to display detailed results in left column - document type shown in right column header
+                    resultArea.style.display = 'none'; // Hide the left column result area
                 } else {
                     let errorMessage = data.error || `HTTP error! Status: ${response.status}`;
                     if (data.status_code) {
