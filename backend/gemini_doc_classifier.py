@@ -35,14 +35,14 @@ def get_gemini_client() -> Optional[genai.Client]:
         print(f"Error [GeminiClassifier]: Failed to initialize Gemini client: {e}")
         return None
 
-def classify_image_with_gemini(image_path: str, image_mime_type: str, document_types: list[str]) -> str | None:
+def classify_document_with_gemini(file_path: str, original_mime_type: str, document_types: list[str]) -> str | None:
     """
-    Classifies the type of document shown in an image using the Google Gemini API.
-    The image path should point to a processed image (e.g., PNG from PDF/HEIC conversion).
+    Classifies the type of document (image or PDF) using the Google Gemini API.
+    For PDFs, it uploads to the File API. For images, it sends data directly.
 
     Args:
-        image_path: Path to the image file (e.g., PNG).
-        image_mime_type: The MIME type of the image file (e.g., 'image/png').
+        file_path: Path to the document file (image or PDF).
+        original_mime_type: The MIME type of the file (e.g., 'image/png', 'application/pdf').
         document_types: A list of strings representing the possible document types.
 
     Returns:
@@ -52,27 +52,39 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
     if not client:
         return None # Error already printed by get_gemini_client
     
-    if not os.path.exists(image_path):
-        print(f"Error [GeminiClassifier]: Image file not found at {image_path}")
+    if not os.path.exists(file_path):
+        print(f"Error [GeminiClassifier]: File not found at {file_path}")
         return None
     if not document_types:
         print("Error [GeminiClassifier]: Document types list cannot be empty.")
         return None
-    if not image_mime_type or not image_mime_type.startswith("image/"):
-        print(f"Error [GeminiClassifier]: Invalid or missing image MIME type: {image_mime_type}")
+    if not original_mime_type:
+        print(f"Error [GeminiClassifier]: Invalid or missing original MIME type: {original_mime_type}")
         return None
 
+    uploaded_file_for_gemini = None # To store reference to file uploaded to Gemini File API
+    
     try:
-        print(f"[GeminiClassifier LOG] Reading image file: {image_path} with MIME type: {image_mime_type}")
-        with open(image_path, 'rb') as f:
-            image_bytes = f.read()
+        file_part = None
+        if original_mime_type == "application/pdf":
+            print(f"[GeminiClassifier LOG] Uploading PDF to Gemini File API: {file_path}")
+            # Ensure correct parameters for upload_file, display_name is optional
+            uploaded_file_for_gemini = client.files.upload_file(path=file_path, mime_type=original_mime_type)
+            print(f"[GeminiClassifier LOG] PDF uploaded successfully: name='{uploaded_file_for_gemini.name}', uri='{uploaded_file_for_gemini.uri}'")
+            # Ensure the part creation matches the latest SDK structure for file URIs
+            file_part = types.Part(file_data=types.FileData(mime_type=uploaded_file_for_gemini.mime_type, file_uri=uploaded_file_for_gemini.uri))
+        elif original_mime_type.startswith("image/"):
+            print(f"[GeminiClassifier LOG] Reading image file: {file_path} with MIME type: {original_mime_type}")
+            with open(file_path, 'rb') as f:
+                image_bytes = f.read()
+            file_part = types.Part.from_data(mime_type=original_mime_type, data=image_bytes)
+        else:
+            print(f"Error [GeminiClassifier]: Unsupported MIME type for Gemini processing: {original_mime_type}")
+            return None
         
-        # Use types.Part for image data with the new SDK
-        image_part = types.Part.from_data(mime_type=image_mime_type, data=image_bytes)
-        
-        # Define the expected JSON structure for the prompt
         prompt = (
-            f"Analyze the document in the provided image and classify its type. "
+            f"Analyze the document and classify its type. "
+            f"The document could be an image or a PDF. "
             f"Your response MUST be a single JSON object. "
             f"The JSON object must have exactly one key: 'predicted_document_type'. "
             f"The value for 'predicted_document_type' must be one of the following exact strings: {document_types}. "
@@ -81,12 +93,8 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
         )
         
         print(f"[GeminiClassifier LOG] Sending prompt to Gemini ({GEMINI_MODEL_ID}): {prompt[:200]}...")
-
-        # The contents should be [prompt, image_part] or [image_part, prompt]
-        # For multimodal, common practice is often image first, then text prompt.
-        contents = [image_part, prompt] 
+        contents = [file_part, prompt] 
         
-        # Create GenerationConfig object - CHANGED TO GenerateContentConfig
         generation_config = types.GenerateContentConfig(
             temperature=0.2,
             response_mime_type="application/json",
@@ -96,7 +104,7 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
         response = client.models.generate_content(
             model=GEMINI_MODEL_ID,
             contents=contents,
-            config=generation_config # Pass GenerationConfig object to 'config' parameter
+            config=generation_config
         )
         
         api_response_text = None
@@ -152,6 +160,14 @@ def classify_image_with_gemini(image_path: str, image_mime_type: str, document_t
     except Exception as e:
         print(f"An error occurred while calling the Gemini API or processing its response: {e}")
         return None
+    finally:
+        if uploaded_file_for_gemini:
+            try:
+                print(f"[GeminiClassifier LOG] Deleting uploaded file '{uploaded_file_for_gemini.name}' from Gemini File API.")
+                client.files.delete_file(name=uploaded_file_for_gemini.name)
+                print(f"[GeminiClassifier LOG] Successfully deleted '{uploaded_file_for_gemini.name}'.")
+            except Exception as delete_e:
+                print(f"Error [GeminiClassifier]: Failed to delete file '{uploaded_file_for_gemini.name}' from Gemini File API: {delete_e}")
 
 if __name__ == '__main__':
     if not os.environ.get("GOOGLE_API_KEY"):
@@ -171,24 +187,55 @@ if __name__ == '__main__':
         doc_types = ["Invoice", "Receipt", "Letter", "ID Card", "Passport", "Report", "Unknown"]
 
         if os.path.exists(sample_png_path):
-            print(f"\n--- Test Case 1: Classifying '{sample_png_path}' ---")
-            classification = classify_image_with_gemini(sample_png_path, sample_mime_type, doc_types)
-            print(f"Predicted Document Type (Gemini): {classification}")
+            print(f"\n--- Test Case 1: Classifying PNG '{sample_png_path}' ---")
+            classification = classify_document_with_gemini(sample_png_path, sample_mime_type, doc_types)
+            print(f"Predicted Document Type (Gemini, PNG): {classification}")
             
-            print(f"\n--- Test Case 2: Classifying with a more restrictive list ---")
+            print(f"\n--- Test Case 2: Classifying PNG with a more restrictive list ---")
             restricted_types = ["Invoice", "Receipt"]
-            classification_restricted = classify_image_with_gemini(sample_png_path, sample_mime_type, restricted_types)
-            print(f"Predicted Document Type (Gemini, restricted): {classification_restricted}")
+            classification_restricted = classify_document_with_gemini(sample_png_path, sample_mime_type, restricted_types)
+            print(f"Predicted Document Type (Gemini, PNG, restricted): {classification_restricted}")
 
         # Test with empty document types
-        print("\n--- Test Case 3: Empty document types list (should return None) ---")
-        classification_empty = classify_image_with_gemini(sample_png_path, sample_mime_type, [])
-        print(f"Predicted Document Type (Gemini, empty types): {classification_empty}")
+        print("\n--- Test Case 3: Empty document types list (PNG, should return None) ---")
+        classification_empty = classify_document_with_gemini(sample_png_path, sample_mime_type, [])
+        print(f"Predicted Document Type (Gemini, PNG, empty types): {classification_empty}")
 
-        # Clean up dummy file
+        # --- Add PDF Test Case ---
+        sample_pdf_path = "temp_gemini_test_document.pdf"
+        sample_pdf_mime_type = "application/pdf"
+        if not os.path.exists(sample_pdf_path):
+            try:
+                # Create a very simple dummy PDF for testing (requires reportlab)
+                from reportlab.pdfgen import canvas
+                c = canvas.Canvas(sample_pdf_path)
+                c.drawString(100, 750, "This is a test PDF document for Gemini classification.")
+                c.drawString(100, 730, "It could be a CV or an Invoice.")
+                c.save()
+                print(f"Created dummy test PDF: {sample_pdf_path}")
+            except ImportError:
+                print(f"Skipping PDF test for Gemini: reportlab not installed. Cannot create dummy PDF.")
+                sample_pdf_path = None # Ensure it's None so test doesn't run
+            except Exception as e:
+                print(f"Could not create dummy PDF: {e}")
+                sample_pdf_path = None
+
+        if sample_pdf_path and os.path.exists(sample_pdf_path):
+            print(f"\n--- Test Case 4: Classifying PDF '{sample_pdf_path}' ---")
+            classification_pdf = classify_document_with_gemini(sample_pdf_path, sample_pdf_mime_type, doc_types)
+            print(f"Predicted Document Type (Gemini, PDF): {classification_pdf}")
+        # --- End Add PDF Test Case ---
+
+        # Clean up dummy files
         if os.path.exists(sample_png_path):
             try:
                 os.remove(sample_png_path)
                 print(f"Removed dummy test image: {sample_png_path}")
             except OSError as e:
-                print(f"Error removing dummy test image {sample_png_path}: {e}") 
+                print(f"Error removing dummy test image {sample_png_path}: {e}")
+        if sample_pdf_path and os.path.exists(sample_pdf_path): # Cleanup PDF
+            try:
+                os.remove(sample_pdf_path)
+                print(f"Removed dummy test PDF: {sample_pdf_path}")
+            except OSError as e:
+                print(f"Error removing dummy test PDF {sample_pdf_path}: {e}") 

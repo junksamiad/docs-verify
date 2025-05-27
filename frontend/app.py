@@ -78,4 +78,4 @@ if __name__ == '__main__':
     # Make sure to create 'static' and 'templates' folders in the 'frontend' directory.
     # Your index.html should be in 'frontend/templates/'
     # Your style.css should be in 'frontend/static/'
-    app.run(debug=True, port=5001) 
+    app.run(debug=True, port=5002) 

@@ -13,6 +13,8 @@ from .image_doc_classifier import OPENAI_FRIENDLY_NAME, convert_to_png_if_needed
 # Gemini Classifier
 from .gemini_doc_classifier import classify_image_with_gemini
 from .gemini_doc_classifier import GEMINI_FRIENDLY_NAME
+from .gemini_doc_classifier import classify_document_with_gemini
+from .gemini_doc_classifier import GEMINI_FRIENDLY_NAME as GEMINI_DISPLAY_NAME
 from .passport_agent import analyze_passport_image # Import the new passport agent
 from .cv_agent import analyze_cv_image, analyze_cv_from_text # Import the new CV agent
 from .driving_licence_agent import analyze_driving_licence_image # Import the new Driving Licence agent
@@ -104,20 +106,25 @@ async def classify_document_endpoint(file: UploadFile = File(...),
             print(f"[CLASSIFICATION LOG - Text] Classified DOCX '{file.filename}' as: '{classification_result}'")
         else:
             print(f"[SERVER LOG] Processing Image/PDF file: {file.filename}")
-            # Image/PDF processing path (existing logic)
-            converted_path, final_mime = convert_image_for_processing(temp_file_path, file_mime_type)
-            if not converted_path:
-                raise HTTPException(status_code=500, detail="Image/PDF conversion failed.")
-            path_for_further_processing = converted_path
             
             if ai_provider.lower() == "openai":
+                # OpenAI always needs an image, so conversion is necessary for PDF/HEIC
+                converted_path, final_mime = convert_image_for_processing(temp_file_path, file_mime_type)
+                if not converted_path:
+                    raise HTTPException(status_code=500, detail="Image/PDF conversion for OpenAI failed.")
+                path_for_further_processing = converted_path
                 classification_result = classify_with_openai(path_for_further_processing, final_mime, POSSIBLE_DOC_TYPES, detail)
                 print(f"[CLASSIFICATION LOG - OpenAI Image] Classified '{file.filename}' as: '{classification_result}'")
+            
             elif ai_provider.lower() == "gemini":
-                classification_result = classify_image_with_gemini(path_for_further_processing, final_mime, POSSIBLE_DOC_TYPES)
-                print(f"[CLASSIFICATION LOG - Gemini Image] Classified '{file.filename}' as: '{classification_result}'")
+                # Gemini can handle PDF directly, or image if it's an image
+                # No conversion to PNG is needed here for Gemini for either PDF or common image types
+                path_for_further_processing = temp_file_path # Use the original uploaded path
+                # The gemini_doc_classifier will handle uploading PDF to File API or reading image bytes
+                classification_result = classify_document_with_gemini(path_for_further_processing, file_mime_type, POSSIBLE_DOC_TYPES)
+                print(f"[CLASSIFICATION LOG - Gemini Document] Classified '{file.filename}' (type: {file_mime_type}) as: '{classification_result}'")
             else:
-                raise HTTPException(status_code=400, detail=f"Invalid AI provider for image: '{ai_provider}'.")
+                raise HTTPException(status_code=400, detail=f"Invalid AI provider: '{ai_provider}'.")
 
         if not classification_result:
             raise HTTPException(status_code=500, detail="Document classification failed to return a type.")
@@ -170,24 +177,15 @@ async def classify_document_endpoint(file: UploadFile = File(...),
             os.remove(temp_file_path)
         # Cleanup for converted image file (path_for_further_processing)
         if path_for_further_processing and path_for_further_processing != temp_file_path and os.path.exists(path_for_further_processing):
-             # Ensure we only delete from the image classifier's specific temp dir if that's how it's structured
-             # Or check if it's in a server-managed CONVERTED_TEMP_DIR (if we add one)
-            if convert_image_for_processing.__module__ == 'backend.image_doc_classifier': # Check where convert_image_for_processing comes from
-                # Assuming convert_image_for_processing saves to its own CONVERTED_TEMP_DIR (from image_doc_classifier.py)
-                # and that image_doc_classifier.py handles its own cleanup or server is aware of that dir.
-                # For now, let's assume the current structure: image_doc_classifier.py creates and cleans up its own temp converted files if it made them.
-                # The path_for_further_processing IS that temp file if conversion happened.
-                # The `classify_with_openai` (which uses convert_image_for_processing) in image_doc_classifier.py has a finally block for cleanup.
-                # So, we might be double-deleting or relying on image_doc_classifier to clean. 
-                # Let's simplify: server should clean up what it creates or gets back from a direct conversion call.
-                # The `convert_image_for_processing` (alias for convert_to_png_if_needed from image_doc_classifier)
-                # creates a new file if conversion happens. Server should delete it.
+             # This cleanup logic is now more relevant for OpenAI which always produces a converted file if input was PDF/HEIC
+             # For Gemini, path_for_further_processing is temp_file_path, which is cleaned by the outer finally block.
+            if ai_provider.lower() == "openai": # Only attempt to delete if OpenAI was used and created a converted file
                 try:
-                    print(f"[SERVER LOG] Attempting to clean up processed file: {path_for_further_processing}")
+                    print(f"[SERVER LOG] Attempting to clean up OpenAI processed file: {path_for_further_processing}")
                     os.remove(path_for_further_processing)
-                    print(f"[SERVER LOG] Cleaned up processed file: {path_for_further_processing}")
+                    print(f"[SERVER LOG] Cleaned up OpenAI processed file: {path_for_further_processing}")
                 except Exception as cleanup_e:
-                    print(f"[SERVER LOG] Error cleaning up processed file {path_for_further_processing}: {cleanup_e}")
+                    print(f"[SERVER LOG] Error cleaning up OpenAI processed file {path_for_further_processing}: {cleanup_e}")
 
 # Make sure to load dotenv for environment variables
 from dotenv import load_dotenv 
