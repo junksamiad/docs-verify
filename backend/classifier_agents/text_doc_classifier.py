@@ -23,13 +23,30 @@ def extract_text_from_docx(docx_path: str) -> str | None:
         for para in document.paragraphs:
             full_text.append(para.text)
         # Consider extracting text from tables as well if needed
-        # for table in document.tables:
-        #     for row in table.rows:
-        #         for cell in row.cells:
-        #             for para_in_cell in cell.paragraphs:
-        #                 full_text.append(para_in_cell.text)
+        for table in document.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for para_in_cell in cell.paragraphs:
+                        full_text.append(para_in_cell.text)
         extracted = '\n'.join(full_text)
         print(f"[TextDocClassifier LOG] Extracted {len(extracted)} characters from {docx_path}")
+        
+        # Debug: Show first and last parts of extracted text to verify completeness
+        if len(extracted) > 500:
+            print(f"[TextDocClassifier DEBUG] First 250 chars: {extracted[:250]}")
+            print(f"[TextDocClassifier DEBUG] Last 250 chars: ...{extracted[-250:]}")
+            
+            # Uncomment the line below to see FULL extracted text (warning: very verbose!)
+            print(f"[TextDocClassifier FULL DEBUG] Complete extracted text:\n{extracted}")
+            
+            # Uncomment the lines below to save extracted text to file for inspection
+            # debug_file = f"debug_extracted_text_{os.path.basename(docx_path)}.txt"
+            # with open(debug_file, 'w', encoding='utf-8') as f:
+            #     f.write(extracted)
+            # print(f"[TextDocClassifier DEBUG] Full extracted text saved to: {debug_file}")
+        else:
+            print(f"[TextDocClassifier DEBUG] Full extracted text: {extracted}")
+        
         return extracted
     except Exception as e:
         print(f"[TextDocClassifier ERROR] Failed to extract text from {docx_path}: {e}")
@@ -117,7 +134,7 @@ def classify_text_document_type(text_content: str, document_types: list[str]) ->
     try:
         # Log text snippet for debugging
         log_text_snippet = text_content[:100].replace('\n', ' ')
-        print(f"📄 TEXT: Processing {len(text_content)} chars → {TEXT_CLASSIFIER_MODEL_ID}")
+        print(f"📝 TEXT: Processing {len(text_content)} chars → {TEXT_CLASSIFIER_MODEL_ID}")
         print(f"📝 TEXT: Preview: {log_text_snippet}...")
         
         # Use the new Responses API with structured outputs

@@ -27,8 +27,8 @@ from classifier_agents.gemini_doc_classifier import GEMINI_FRIENDLY_NAME
 from classifier_agents.text_doc_classifier import extract_text_from_docx, extract_text_from_document, classify_text_document_type
 
 # Verification Agents
-# from verification_agents.passport_agent import analyze_passport_image
-# from verification_agents.cv_agent import analyze_cv_image, analyze_cv_from_text
+from verification_agents.passport_agent import analyze_passport_document
+from verification_agents.cv_agent import analyze_cv_image, analyze_cv_from_text, analyze_cv_pdf
 # from verification_agents.driving_licence_agent import analyze_driving_licence_image
 from verification_agents.bank_statement_agent import analyze_bank_statement_image, analyze_bank_statement_pdf
 
@@ -178,7 +178,46 @@ async def classify_document_endpoint(file: UploadFile = File(...),
         # --- Specialized Agent Processing ---
         print("🔍 AGENT ROUTING: Checking for specialized analysis...")
         
-        if classification_result == "Bank Statement":
+        if classification_result == "Passport":
+            print("🛂 PASSPORT AGENT: Starting passport analysis...")
+            
+            # Passport agent now supports all formats natively with Gemini 2.5
+            if is_text_file:
+                print("⚠️ PASSPORT AGENT: Text files not supported - requires image/PDF format")
+                final_response_content["passport_analysis"] = {
+                    "error": "Passport analysis requires image or PDF format",
+                    "details": "Text files (.docx, .txt) cannot be processed by the passport agent"
+                }
+            else:
+                # All image formats and PDF supported natively
+                print(f"🖼️ PASSPORT AGENT: Processing {file_mime_type} → {path_for_further_processing}")
+                passport_analysis = analyze_passport_document(path_for_further_processing, file_mime_type)
+                
+                if passport_analysis:
+                    if "error" in passport_analysis:
+                        print(f"❌ PASSPORT AGENT: Analysis failed → {passport_analysis.get('error', 'Unknown error')}")
+                    else:
+                        # Log extracted passport details
+                        extracted_info = passport_analysis.get('extracted_information', {})
+                        manual_flags = passport_analysis.get('manual_verification_flags', [])
+                        image_quality = passport_analysis.get('image_quality_summary', 'N/A')
+                        
+                        surname = extracted_info.get('surname', 'N/A') if extracted_info else 'N/A'
+                        given_names = extracted_info.get('given_names', 'N/A') if extracted_info else 'N/A'
+                        passport_number = extracted_info.get('passport_number', 'N/A') if extracted_info else 'N/A'
+                        nationality = extracted_info.get('nationality', 'N/A') if extracted_info else 'N/A'
+                        
+                        print(f"✅ PASSPORT AGENT: Extracted → {surname}, {given_names} | {passport_number} | {nationality}")
+                        print(f"📸 PASSPORT AGENT: Document quality → {image_quality}")
+                        print(f"⚠️ PASSPORT AGENT: Manual verification flags: {len(manual_flags)} → {manual_flags}")
+                    
+                    final_response_content["passport_analysis"] = passport_analysis
+                else:
+                    print("❌ PASSPORT AGENT: No response from analysis")
+                    final_response_content["passport_analysis"] = {
+                        "error": "Passport analysis returned no data"
+                    }
+        elif classification_result == "Bank Statement":
             print("🏦 BANK STATEMENT AGENT: Starting financial analysis...")
             
             # Determine which function to use based on file type
@@ -213,6 +252,53 @@ async def classify_document_endpoint(file: UploadFile = File(...),
                     final_response_content["bank_statement_analysis"] = {
                         "error": "Bank statement analysis returned no data"
                     }
+        elif classification_result == "CV":
+            print("📋 CV AGENT: Starting CV analysis...")
+            
+            # Determine which function to use based on file type
+            if is_text_file:
+                print("📄 CV AGENT: Processing text-based CV...")
+                print(f"📄 CV AGENT: Text length being analyzed: {len(extracted_text_content)} characters")
+                
+                # Debug: Show sample of text being passed to CV agent
+                if len(extracted_text_content) > 500:
+                    print(f"📄 CV AGENT: Text preview (first 200 chars): {extracted_text_content[:200]}")
+                    print(f"📄 CV AGENT: Text preview (last 200 chars): ...{extracted_text_content[-200:]}")
+                else:
+                    print(f"📄 CV AGENT: Full text being analyzed: {extracted_text_content}")
+                
+                cv_result = analyze_cv_from_text(extracted_text_content)
+            elif file_mime_type == "application/pdf":
+                print("📋 CV AGENT: Processing PDF CV...")
+                cv_result = analyze_cv_pdf(path_for_further_processing)
+            else:
+                # Image files (PNG, JPG, WEBP, GIF, HEIC, HEIF)
+                print("🖼️ CV AGENT: Processing image CV...")
+                cv_result = analyze_cv_image(path_for_further_processing)
+            
+            if cv_result:
+                print("📋 CV AGENT: Analysis complete")
+                # Add detailed logging for CV results
+                if "error" in cv_result:
+                    print(f"❌ CV AGENT: Analysis failed → {cv_result.get('error', 'Unknown error')}")
+                else:
+                    # Log extracted details
+                    personal_details = cv_result.get('personal_details', {})
+                    work_gaps = cv_result.get('work_experience_gaps', [])
+                    other_flags = cv_result.get('other_verification_flags', [])
+                    
+                    name = personal_details.get('name', 'N/A') if personal_details else 'N/A'
+                    phone = personal_details.get('phone_number', 'N/A') if personal_details else 'N/A'
+                    email = personal_details.get('email_address', 'N/A') if personal_details else 'N/A'
+                    
+                    print(f"✅ CV AGENT: Extracted → Name: {name}, Phone: {phone}, Email: {email}")
+                    print(f"⚠️ CV AGENT: Work gaps found: {len(work_gaps)} → {work_gaps}")
+                    print(f"🔍 CV AGENT: Other flags: {len(other_flags)} → {other_flags}")
+                
+                final_response_content["cv_analysis"] = cv_result
+            else:
+                print("⚠️ CV AGENT: Analysis failed or returned no result")
+                final_response_content["cv_analysis"] = {"error": "CV analysis failed to return results"}
         else:
             print(f"⏭️ AGENT ROUTING: No specialized agent for '{classification_result}' - classification only")
 

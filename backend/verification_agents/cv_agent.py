@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from google import genai # Updated import
 from google.genai import types # Updated import for types
+from google.genai.types import GenerateContentConfig, Part, Blob
 
 from pydantic import BaseModel, Field
 
@@ -92,8 +93,15 @@ Prioritize the following:
 1.  **Personal Details Extraction**: Extract the candidate's full name, phone number, email address, physical address (if present), and date of birth (if present).
     If a detail is not found, omit it or use null for that specific field in the 'personal_details' object.
 
-2.  **Work Experience Gap Identification**: Scrutinize the work experience sections for any unexplained gaps of approximately 3 months or longer between roles or educational periods.
-    List each *distinct* identified gap as a string in the 'work_experience_gaps' array, strictly using the format 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'). If no such gaps are found, this array should be empty.
+2.  **Work Experience Gap Identification**: Analyze the work experience chronologically and identify ANY gaps in employment history, regardless of duration.
+    Look for periods where there is no employment listed between jobs. List each gap you find in the 'work_experience_gaps' array.
+    Format each gap as 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'), but focus on finding ALL gaps rather than perfect formatting.
+    If you're unsure about a potential gap, include it - it's better to flag too many than miss important ones.
+    
+    Examples of what to look for:
+    - Job A ends December 2015, Job B starts March 2016 → Gap: 'jan-2016 to feb-2016'
+    - Job X ends June 2020, Job Y starts September 2020 → Gap: 'jul-2020 to aug-2020'
+    - Education ends 2018, first job starts January 2019 → Gap: 'graduation to dec-2018'
 
 3.  **Image Quality Assessment**: Briefly describe the visual quality of the CV image (e.g., clarity, readability, glare) in 'image_quality_summary'.
 
@@ -113,7 +121,9 @@ Schema:
     generation_config = types.GenerateContentConfig(
         temperature=0.1,
         response_mime_type="application/json",
-        response_schema=CVAnalysisData
+        # Removed strict response_schema to allow more flexible gap detection
+        # response_schema=CVAnalysisData,
+        max_output_tokens=32000
     )
 
     api_response_text = None
@@ -195,8 +205,15 @@ Prioritize the following:
 1.  **Personal Details Extraction**: Extract the candidate's full name, phone number, email address, physical address (if present), and date of birth (if present).
     If a detail is not found, omit it or use null for that specific field in the 'personal_details' object.
 
-2.  **Work Experience Gap Identification**: Scrutinize the work experience sections for any unexplained gaps of approximately 3 months or longer between roles or educational periods.
-    List each *distinct* identified gap as a string in the 'work_experience_gaps' array, strictly using the format 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'). If no such gaps are found, this array should be empty.
+2.  **Work Experience Gap Identification**: Analyze the work experience chronologically and identify ANY gaps in employment history, regardless of duration.
+    Look for periods where there is no employment listed between jobs. List each gap you find in the 'work_experience_gaps' array.
+    Format each gap as 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'), but focus on finding ALL gaps rather than perfect formatting.
+    If you're unsure about a potential gap, include it - it's better to flag too many than miss important ones.
+    
+    Examples of what to look for:
+    - Job A ends December 2015, Job B starts March 2016 → Gap: 'jan-2016 to feb-2016'
+    - Job X ends June 2020, Job Y starts September 2020 → Gap: 'jul-2020 to aug-2020'
+    - Education ends 2018, first job starts January 2019 → Gap: 'graduation to dec-2018'
 
 3.  **Text Readability/Structure Assessment**: Briefly describe the readability and structure of the CV text (e.g., clarity of sections, formatting, any obvious OCR errors if it looks like scanned text) in 'image_quality_summary' (keeping the key name 'image_quality_summary' for schema consistency).
 
@@ -208,7 +225,7 @@ Schema:
 {json.dumps(CVAnalysisData.model_json_schema(), indent=2)}
 ```
 CV Text to Analyze:
-{text_content[:20000]}
+{text_content}
 """
 
     contents = [prompt_text]
@@ -217,13 +234,15 @@ CV Text to Analyze:
     generation_config = types.GenerateContentConfig(
         temperature=0.1,
         response_mime_type="application/json",
-        response_schema=CVAnalysisData
+        # Removed strict response_schema to allow more flexible gap detection
+        # response_schema=CVAnalysisData,
+        max_output_tokens=32000
     )
 
     api_response_text = None
     try:
         log_text_snippet = text_content[:200].replace('\n', ' ')
-        print(f"[CVAgent LOG] Sending text (first 200 chars: '{log_text_snippet}') to {CV_AGENT_MODEL_ID} for Gemini text analysis.")
+        print(f"[CVAgent LOG] Sending FULL CV text ({len(text_content)} chars) to {CV_AGENT_MODEL_ID} for analysis. Preview: '{log_text_snippet}...'")
         response = client.models.generate_content(
             model=CV_AGENT_MODEL_ID, 
             contents=contents,
@@ -236,6 +255,11 @@ CV Text to Analyze:
             try:
                 cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
                 print("[CVAgent LOG] Successfully parsed and validated Gemini text response with Pydantic model.")
+                
+                # Debug: Show what was actually extracted
+                work_gaps = cv_analysis_data.work_experience_gaps
+                print(f"[CVAgent DEBUG] Work gaps extracted from JSON: {len(work_gaps)} gaps → {work_gaps}")
+                
                 return cv_analysis_data.model_dump(mode='json')
             except Exception as pydantic_error:
                 print(f"[CVAgent ERROR] Pydantic validation failed for Gemini text analysis: {pydantic_error}. Raw response: {api_response_text}")
@@ -266,6 +290,123 @@ CV Text to Analyze:
     except Exception as e:
         print(f"[CVAgent ERROR] An error occurred during Gemini text-based CV analysis: {e}. API response text: {api_response_text if api_response_text else 'N/A'}")
         return {"error": f"Exception during text-based CV analysis (Gemini): {str(e)}"}
+
+def analyze_cv_pdf(pdf_path: str) -> Optional[dict]:
+    """
+    Analyzes a CV/Resume PDF using Gemini, focusing on personal details and work experience gaps.
+    Uses Pydantic models for response structure.
+    """
+    print(f"[CVAgent LOG] Analyzing CV PDF with Gemini: {pdf_path}")
+    
+    client = get_gemini_client_and_model()
+    if not client:
+        return {"error": "Gemini client not initialized (GOOGLE_API_KEY missing or invalid)."}
+
+    if not os.path.exists(pdf_path):
+        print(f"[CVAgent ERROR] PDF file not found at {pdf_path}")
+        return {"error": f"PDF file not found: {pdf_path}"}
+
+    try:
+        with open(pdf_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+        # Fixed PDF part construction to match working gemini_doc_classifier.py pattern
+        pdf_part = Part(
+            inline_data=Blob(
+                data=pdf_bytes,
+                mime_type="application/pdf"
+            )
+        )
+    except Exception as e:
+        print(f"[CVAgent ERROR] Error reading PDF file {pdf_path}: {e}")
+        return {"error": f"Could not read PDF file: {e}"}
+
+    prompt_text = f"""You are an AI assistant specialized in analyzing CVs/Resumes from PDF documents.
+Your primary goal is to extract specific personal details and identify any significant, unexplained gaps in work experience.
+Carefully examine the provided CV PDF document.
+
+Prioritize the following:
+
+1.  **Personal Details Extraction**: Extract the candidate's full name, phone number, email address, physical address (if present), and date of birth (if present).
+    If a detail is not found, omit it or use null for that specific field in the 'personal_details' object.
+
+2.  **Work Experience Gap Identification**: Analyze the work experience chronologically and identify ANY gaps in employment history, regardless of duration.
+    Look for periods where there is no employment listed between jobs. List each gap you find in the 'work_experience_gaps' array.
+    Format each gap as 'mmm-yyyy to mmm-yyyy' (e.g., 'jan-2019 to may-2019'), but focus on finding ALL gaps rather than perfect formatting.
+    If you're unsure about a potential gap, include it - it's better to flag too many than miss important ones.
+    
+    Examples of what to look for:
+    - Job A ends December 2015, Job B starts March 2016 → Gap: 'jan-2016 to feb-2016'
+    - Job X ends June 2020, Job Y starts September 2020 → Gap: 'jul-2020 to aug-2020'
+    - Education ends 2018, first job starts January 2019 → Gap: 'graduation to dec-2018'
+
+3.  **Document Quality Assessment**: Briefly describe the quality and readability of the CV PDF (e.g., clarity, formatting, any obvious scanning artifacts) in 'image_quality_summary'.
+
+4.  **Other Verification Flags**: List any other distinct anomalies or major inconsistencies (unrelated to work gaps, e.g., inconsistent formatting, suspected alterations, unusual document structure) in the 'other_verification_flags' array. If none, this array should be empty.
+
+Your response MUST be a single, valid JSON object that strictly conforms to the following JSON Schema. Do not include any text outside of this JSON object. Ensure all specified formats (especially for dates and gaps) are followed.
+Schema:
+```json
+{json.dumps(CVAnalysisData.model_json_schema(), indent=2)}
+```
+"""
+
+    contents = [pdf_part, prompt_text]
+
+    generation_config = types.GenerateContentConfig(
+        temperature=0.1,
+        response_mime_type="application/json",
+        # Removed strict response_schema to allow more flexible gap detection
+        # response_schema=CVAnalysisData,
+        max_output_tokens=32000
+    )
+
+    api_response_text = None
+    try:
+        print(f"[CVAgent LOG] Sending PDF request to Gemini model: {CV_AGENT_MODEL_ID} for CV PDF analysis")
+        response = client.models.generate_content(
+            model=CV_AGENT_MODEL_ID,
+            contents=contents,
+            config=generation_config
+        )
+        
+        if response.text:
+            api_response_text = response.text
+            print(f"[CVAgent LOG] Raw JSON response (CV PDF analysis): {api_response_text}")
+            try:
+                cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
+                print("[CVAgent LOG] Successfully parsed and validated Gemini CV PDF response with Pydantic model.")
+                return cv_analysis_data.model_dump(mode='json')
+            except Exception as pydantic_error:
+                print(f"[CVAgent ERROR] Pydantic validation failed (CV PDF): {pydantic_error}. Raw response: {api_response_text}")
+                return {"error": "CV PDF analysis (Gemini) response failed Pydantic validation.", "details": str(pydantic_error), "raw_response": api_response_text}
+        else: # Fallback to check candidates
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                 api_response_text = response.candidates[0].content.parts[0].text
+                 print(f"[CVAgent LOG] Raw JSON response from candidate (CV PDF analysis): {api_response_text}")
+                 try:
+                    cv_analysis_data = CVAnalysisData.model_validate_json(api_response_text)
+                    print("[CVAgent LOG] Successfully parsed and validated Gemini CV PDF response (from candidate) with Pydantic model.")
+                    return cv_analysis_data.model_dump(mode='json')
+                 except Exception as pydantic_error:
+                    print(f"[CVAgent ERROR] Pydantic validation failed (CV PDF, from candidate): {pydantic_error}. Raw response: {api_response_text}")
+                    return {"error": "CV PDF analysis (Gemini, from candidate) response failed Pydantic validation.", "details": str(pydantic_error), "raw_response": api_response_text}
+            
+            print(f"[CVAgent ERROR] No valid text in Gemini API response for CV PDF. Full response: {response}")
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                 reason = response.prompt_feedback.block_reason
+                 reason_name = reason.name if hasattr(reason, 'name') else str(reason)
+                 print(f"[CVAgent Safety] Prompt blocked for CV PDF. Reason: {reason_name}")
+                 return {"error": f"Prompt blocked for CV PDF analysis. Reason: {reason_name}"}
+            if response.candidates and response.candidates[0].finish_reason.name != 'STOP':
+                reason_name = response.candidates[0].finish_reason.name
+                safety_ratings_str = str(response.candidates[0].safety_ratings)
+                print(f"[CVAgent Safety] CV PDF analysis finished with reason: {reason_name}. Details: {safety_ratings_str}")
+                return {"error": f"CV PDF analysis did not complete successfully. Finish Reason: {reason_name}"}
+            return {"error": "No content from CV PDF analysis API (Gemini)."}
+
+    except Exception as e:
+        print(f"[CVAgent ERROR] An error occurred during Gemini CV PDF analysis: {e}. API response text: {api_response_text if api_response_text else 'N/A'}")
+        return {"error": f"Exception during CV PDF analysis (Gemini): {str(e)}", "raw_response_snippet": api_response_text[:500] if api_response_text else 'N/A'}
 
 if __name__ == '__main__':
     # Ensure GOOGLE_API_KEY is set in your environment to run these tests
