@@ -281,6 +281,48 @@ button#submitBtn:disabled {
     transform: scale(0.98);
 }
 
+/* Timer Area Styling */
+.timer-area {
+    margin-top: 15px;
+    padding: 15px;
+    border-radius: var(--border-radius);
+    background-color: #e3f2fd;
+    border: 1px solid #90caf9;
+    text-align: center;
+}
+
+.timer-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.timer-label {
+    font-size: 0.9em;
+    color: #1565c0;
+    font-weight: 500;
+}
+
+.timer-value {
+    font-size: 1.1em;
+    color: #0d47a1;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+    min-width: 60px;
+    text-align: left;
+}
+
+.timer-area.completed {
+    background-color: #e8f5e9;
+    border-color: var(--primary-color);
+}
+
+.timer-area.completed .timer-label,
+.timer-area.completed .timer-value {
+    color: var(--primary-color);
+}
+
 .result-area, .error-area {
     margin-top: 25px;
     padding: 15px 20px;

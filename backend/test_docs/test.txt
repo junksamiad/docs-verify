@@ -1,0 +1,46 @@
+Lee Hayton
+
+11 Granby Rd, Stretford, Manchester, M32 8JL
+Tel: 07835 065 013    Email: junksamiad@gmail.com
+Personal Profile
+Experienced AI Developer and Builder with a passion for designing scalable machine-learning systems and leading cross-functional teams. As a parent and musician, I bring creativity, patience and strong communication skills to every project. Keen to drive innovation in AI-driven products and mentor junior engineers.
+Key Skills
+• Programming & Frameworks: Python, TensorFlow, PyTorch, JavaScript (Node.js)
+• Machine Learning & Data Science: NLP, computer vision, deep learning, data engineering
+• DevOps & Cloud: Docker, Kubernetes, AWS (EC2, S3, SageMaker), CI/CD pipelines
+• Leadership & Collaboration: Agile methodologies, technical mentorship, stakeholder engagement
+• Other: Git, SQL/NoSQL databases, REST APIs, unit testing, technical writing
+Professional Experience
+Senior AI Developer – Tech Innovators Ltd, London
+April 2022 – Present
+• Led a team of 5 engineers to design and deploy an NLP pipeline for automated contract review, reducing manual review time by 60%.
+• Implemented microservices architecture on AWS, improving system reliability and reducing deployment times by 40%.
+• Collaborated with product and legal teams to translate business requirements into technical specifications.
+• Mentored junior developers, ran weekly knowledge-share sessions, and introduced best practices for code quality and testing.
+Software Engineer – NextGen Solutions, Cambridge
+April 2019 – December 2021
+• Developed real-time recommendation engine using collaborative filtering and deep learning, increasing user engagement by 25%.
+• Built RESTful APIs in Node.js to serve model predictions at scale, handling 10k+ requests per minute.
+• Automated data-preprocessing workflows with Airflow, cutting data-prep time by 50%.
+• Acted as Scrum Master for two sprints, coordinating planning, reviews and retrospectives.
+Data Analyst – Insight Corp, Manchester
+October 2017 – December 2018
+• Analysed customer behaviour datasets (100M+ rows) using Python (pandas, scikit-learn), identifying key churn predictors.
+• Presented findings to senior management, informing a revised customer retention strategy that reduced churn by 12%.
+• Created dashboards in Tableau to visualise KPIs across marketing and sales teams.
+• Trained 10+ staff in basic data-analysis techniques and dashboard use.
+Data Analyst – Insight Corp, Manchester
+September 2016 – June 2017
+• Analysed and cleaned large sales datasets, producing weekly reports that supported pricing strategy adjustments.
+• Supported senior analysts with exploratory data analysis and model prototyping.
+Education
+MSc in Artificial Intelligence, University of Oxford, UK | 2015 – 2016
+BSc (Hons) Computer Science, University of Cambridge, UK | 2012 – 2015
+Certifications
+• AWS Certified Machine Learning – Specialty
+• TensorFlow Developer Certificate
+Projects & Interests
+• Personal Home Automation: Built a Raspberry Pi–based smart home hub to control lighting and heating via voice commands.
+• Open-Source Contributor: Regularly contribute to scikit-learn and Hugging Face transformer libraries.
+• Musician: Classically trained guitarist; perform regularly at local venues.
+• Parent & Builder: Design and construct DIY educational toys and coding kits for my children.

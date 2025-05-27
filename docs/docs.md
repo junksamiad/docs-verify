@@ -7,12 +7,25 @@ source .venv/bin/activate
 
 *** frontend ***
 
+cd frontend
+
+source .venv/bin/activate
+
 python app.py
 
 
 *** backend ***
 
-cd into backend and activate venv, then cd back into docs-verify and run:
+***macOS***
+cd into backend and activate venv
 
-uvicorn backend.server:app --reload --port 8000
+source .venv/bin/activate
+
+then cd back into docs-verify and run:
+
+uvicorn server:app --reload --port 8000
+
+***windows***
+
+backend\.venv\Scripts\activate.bat
 

@@ -19,7 +19,7 @@
                 <h2>Classification</h2>
                 <form id="upload-form" enctype="multipart/form-data">
                     <div class="upload-area" id="upload-area">
-                        <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif, .docx" required>
+                        <input type="file" id="file-input" name="file" accept="image/png, image/jpeg, image/webp, image/gif, application/pdf, image/heic, image/heif, .docx, .txt" required>
                         <label for="file-input" class="upload-label">
                             <img src="{{ url_for('static', filename='upload_icon.svg') }}" alt="Upload Icon" class="upload-icon">
                             <p>Drag & drop an image or document here, or click to select</p>
@@ -51,6 +51,14 @@
                         <button type="button" id="resetButton" class="button secondary-button">Start New Classification</button>
                     </div>
                 </form>
+
+                <!-- Timer Display -->
+                <div id="timer-area" class="timer-area" style="display: none;">
+                    <div class="timer-display">
+                        <span class="timer-label">Processing time:</span>
+                        <span id="timer-value" class="timer-value">0.0s</span>
+                    </div>
+                </div>
 
                 <div id="result-area" class="result-area" style="display: none;">
                     <h3>Classification Result:</h3>
@@ -103,6 +111,14 @@
         const resetButton = document.getElementById('resetButton');
         const aiProviderSelect = document.getElementById('aiProvider');
 
+        // Timer elements
+        const timerArea = document.getElementById('timer-area');
+        const timerValue = document.getElementById('timer-value');
+        
+        // Timer variables
+        let startTime = null;
+        let timerInterval = null;
+
         // New elements for displaying doc type in right column
         const documentTypeDisplayArea = document.getElementById('document-type-display-area');
         const documentTypeResultP = document.getElementById('documentTypeResult');
@@ -118,7 +134,52 @@
         const errorDiv = document.getElementById('error-area');
         const errorTextP = document.getElementById('error-text'); // Specific p for error text
 
+        // Debug: Check if elements exist
+        console.log('DOM Elements Check:', {
+            resultDiv: !!resultDiv,
+            classificationResultDiv: !!classificationResultDiv,
+            errorDiv: !!errorDiv,
+            errorTextP: !!errorTextP
+        });
+
         window.classificationResultData = null; // To store classification result for the clarify button
+
+        // Timer functions
+        function startTimer() {
+            startTime = Date.now();
+            timerArea.style.display = 'block';
+            timerArea.classList.remove('completed');
+            timerValue.textContent = '0.0s';
+            
+            timerInterval = setInterval(() => {
+                const elapsed = (Date.now() - startTime) / 1000;
+                timerValue.textContent = elapsed.toFixed(1) + 's';
+            }, 100); // Update every 100ms for smooth animation
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            
+            if (startTime) {
+                const finalTime = (Date.now() - startTime) / 1000;
+                timerValue.textContent = finalTime.toFixed(1) + 's';
+                timerArea.classList.add('completed');
+            }
+        }
+
+        function resetTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            startTime = null;
+            timerArea.style.display = 'none';
+            timerArea.classList.remove('completed');
+            timerValue.textContent = '0.0s';
+        }
 
         // Helper to prevent XSS if data contains HTML characters
         function escapeHtml(unsafe) {
@@ -378,6 +439,9 @@
 
             submitButton.disabled = true;
             submitButton.textContent = 'Classifying...';
+            
+            // Start the timer
+            startTimer();
 
             const formData = new FormData();
             const file = fileInput.files[0];
@@ -386,13 +450,16 @@
 
             // --- START: Frontend File Type Validation ---
             if (file) {
-                const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'image/heic', 'image/heif'];
-                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i, /'.pdf$'/i, /'.heic$'/i, /'.heif$'/i, /'.docx$'/i];
+                const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'image/heic', 'image/heif', 'text/plain'];
+                const allowedExtensions = [/'.jpg$'/i, /'.jpeg$'/i, /'.png$'/i, /'.gif$'/i, /'.webp$'/i, /'.pdf$'/i, /'.heic$'/i, /'.heif$'/i, /'.docx$'/i, /'.txt$'/i];
                 
                 let isValidType = allowedMimeTypes.includes(file.type);
-                // For docx, file.type might be application/vnd.openxmlformats-officedocument.wordprocessingml.document or application/octet-stream
+                // For docx and txt, file.type might vary or be application/octet-stream
                 if (file.name.toLowerCase().endsWith('.docx')) {
                     isValidType = true; // Directly allow if extension is .docx, as MIME type can vary
+                }
+                if (file.name.toLowerCase().endsWith('.txt')) {
+                    isValidType = true; // Directly allow if extension is .txt, as MIME type can vary
                 }
                 let isValidExtension = allowedExtensions.some(ext => ext.test(file.name));
 
@@ -405,10 +472,11 @@
                 }
 
                 if (!isValidType && !isValidExtension) { // If neither is valid, reject
-                    errorText.textContent = `Invalid file type: ${file.name}. Please upload an Image (JPG, PNG, GIF, WEBP, HEIC/HEIF), PDF, or DOCX file.`;
+                    errorText.textContent = `Invalid file type: ${file.name}. Please upload an Image (JPG, PNG, GIF, WEBP, HEIC/HEIF), PDF, DOCX, or TXT file.`;
                     errorArea.style.display = 'block';
                     submitButton.disabled = false;
                     submitButton.textContent = 'Classify Document';
+                    stopTimer(); // Stop timer on validation error
                     return; // Stop submission
                 }
             } else {
@@ -416,6 +484,7 @@
                 errorArea.style.display = 'block';
                 submitButton.disabled = false;
                 submitButton.textContent = 'Classify Document';
+                stopTimer(); // Stop timer on validation error
                 return; // Stop submission
             }
             // --- END: Frontend File Type Validation ---
@@ -431,7 +500,6 @@
                 });
 
                 const data = await response.json();
-                const classificationResultDiv = document.getElementById('classificationResult');
                 
                 // For passport analysis in the second column
                 const passportDisplayArea = document.getElementById('passport-analysis-display-area');
@@ -441,7 +509,9 @@
                     window.classificationResultData = data; // Assign the full response data here
 
                     // Clear old result area in left column
-                    classificationResultDiv.innerHTML = '';
+                    if (classificationResultDiv) {
+                        classificationResultDiv.innerHTML = '';
+                    }
                     resultArea.style.display = 'none';
 
                     // Display Document Type in the new top-right area
@@ -492,6 +562,12 @@
                     resultHtml += `<p><strong>Document Type:</strong> ${data.document_type}</p>`;
                     resultHtml += `<p><strong>AI Provider:</strong> ${data.ai_provider || 'N/A'}</p>`;
                     resultHtml += `<p><strong>Detail Used:</strong> ${data.detail_used || 'N/A'}</p>`;
+                    
+                    // Add processing time to results
+                    if (startTime) {
+                        const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                        resultHtml += `<p><strong>Processing Time:</strong> ${processingTime}s</p>`;
+                    }
 
                     if (data.bank_statement_analysis) {
                         let bsHtmlFragment = '<h3>Bank Statement Analysis (UK):</h3>'; // Changed variable name
@@ -556,6 +632,9 @@
                 document.getElementById('passportAnalysisContent').innerHTML = '';
             }
             finally {
+                // Stop the timer
+                stopTimer();
+                
                 submitButton.disabled = false; 
                 submitButton.textContent = 'Classify Document';
             }
@@ -568,12 +647,17 @@
             uploadArea.classList.remove('file-selected'); // Assuming this class is added on file selection
 
             resultDiv.style.display = 'none';
-            classificationResultDiv.innerHTML = '';
+            if (classificationResultDiv) {
+                classificationResultDiv.innerHTML = '';
+            }
             errorDiv.style.display = 'none';
             errorTextP.textContent = '';
 
             documentTypeDisplayArea.style.display = 'none';
             documentTypeResultP.textContent = '';
+            
+            // Reset the timer
+            resetTimer();
             
             const passportAnalysisDisplayArea = document.getElementById('passport-analysis-display-area');
             if(passportAnalysisDisplayArea) passportAnalysisDisplayArea.style.display = 'none';
