@@ -205,13 +205,15 @@
             if (!passportData) return '';
 
             let html = '<ul style="list-style-type: none; padding-left: 0;">'; // Changed to list-style-type: none and padding-left: 0 for cleaner look
+            let hasManualVerificationFlags = false;
+            let manualVerificationHtml = '';
 
             // Handle image_quality_summary
             if (passportData.image_quality_summary) {
                 html += `<li><strong>Image Quality Summary:</strong> ${escapeHtml(passportData.image_quality_summary)}</li>`;
             }
 
-            // Handle manual_verification_flags
+            // Handle manual_verification_flags with special alert styling
             if (passportData.hasOwnProperty('manual_verification_flags')) { // Check if property exists
                 const flags = passportData.manual_verification_flags;
                 let recommendedText = "No";
@@ -219,21 +221,38 @@
 
                 if (Array.isArray(flags) && flags.length > 0) {
                     recommendedText = "Yes";
-                    flagsListHtml += '<ul style="list-style-type: circle; margin-left: 20px; margin-top: 5px;">';
+                    hasManualVerificationFlags = true;
+                    flagsListHtml += '<div class="verification-flags">';
+                    flagsListHtml += '<strong>Issues Detected:</strong>';
+                    flagsListHtml += '<ul>';
                     flags.forEach(flag => {
                         flagsListHtml += `<li>${escapeHtml(flag)}</li>`;
                     });
-                    flagsListHtml += '</ul>';
+                    flagsListHtml += '</ul></div>';
                 } else if (!Array.isArray(flags) && flags && flags.toLowerCase().includes('no specific flags')) {
                     recommendedText = "No"; // Handles string like "No specific flags noted"
                 } else if (!Array.isArray(flags) && flags) {
                      // If it's a non-empty string not indicating "no flags", assume it implies manual check
                     recommendedText = "Yes";
-                    flagsListHtml = `<p style="margin-left: 20px; margin-top: 5px;">${escapeHtml(flags)}</p>`;
+                    hasManualVerificationFlags = true;
+                    flagsListHtml = `<div class="verification-flags"><strong>Issue Detected:</strong><p style="margin: 5px 0;">${escapeHtml(flags)}</p></div>`;
                 }
-                html += `<li><strong>Manual Verification Recommended:</strong> ${recommendedText}</li>`;
-                if (flagsListHtml) {
-                    html += flagsListHtml;
+
+                // Create the manual verification section with conditional alert styling
+                if (hasManualVerificationFlags) {
+                    manualVerificationHtml = `
+                        <div class="manual-verification-alert critical">
+                            <div class="verification-header">
+                                ⚠️ MANUAL VERIFICATION REQUIRED
+                            </div>
+                            <div style="padding: 10px 0;">
+                                <strong>Manual Review Recommended:</strong> ${recommendedText}
+                            </div>
+                            ${flagsListHtml}
+                        </div>
+                    `;
+                } else {
+                    html += `<li><strong>Manual Verification Recommended:</strong> ${recommendedText}</li>`;
                 }
             }
 
@@ -263,6 +282,12 @@
                 }
             }
             html += '</ul>';
+
+            // Add the manual verification alert at the top if needed
+            if (hasManualVerificationFlags) {
+                return manualVerificationHtml + html;
+            }
+            
             return html;
         }
 

@@ -29,7 +29,7 @@ from classifier_agents.text_doc_classifier import extract_text_from_docx, extrac
 # Verification Agents
 from verification_agents.passport_agent import analyze_passport_document
 from verification_agents.cv_agent import analyze_cv_image, analyze_cv_from_text, analyze_cv_pdf
-# from verification_agents.driving_licence_agent import analyze_driving_licence_image
+from verification_agents.driving_licence_agent import analyze_driving_licence_document
 from verification_agents.bank_statement_agent import analyze_bank_statement_image, analyze_bank_statement_pdf
 
 app = FastAPI()
@@ -299,6 +299,26 @@ async def classify_document_endpoint(file: UploadFile = File(...),
             else:
                 print("⚠️ CV AGENT: Analysis failed or returned no result")
                 final_response_content["cv_analysis"] = {"error": "CV analysis failed to return results"}
+        elif classification_result == "Drivers Licence":
+            print("🚗 DRIVERS LICENCE AGENT: Starting drivers licence analysis...")
+            
+            # Drivers licence agent now supports all formats natively with Gemini 2.5
+            if is_text_file:
+                print("⚠️ DRIVERS LICENCE AGENT: Text files not supported - requires visual document")
+                agent_result = {"error": "Drivers licence analysis requires visual document (image or PDF), not text file"}
+            else:
+                # Use unified function for all visual formats (images and PDFs)
+                agent_result = analyze_driving_licence_document(temp_file_path, file_mime_type)
+            
+            if agent_result and "error" not in agent_result:
+                print("✅ DRIVERS LICENCE AGENT: Analysis completed successfully")
+                print(f"[DLAgent RESULT] Quality: {agent_result.get('image_quality_summary', 'N/A')}")
+                print(f"[DLAgent RESULT] Manual flags: {agent_result.get('manual_verification_flags', [])}")
+                print(f"[DLAgent RESULT] Licence details: {agent_result.get('licence_details', {})}")
+                final_response_content["driving_licence_analysis"] = agent_result
+            else:
+                print(f"❌ DRIVERS LICENCE AGENT: Analysis failed - {agent_result.get('error', 'Unknown error')}")
+                final_response_content["driving_licence_analysis"] = agent_result
         else:
             print(f"⏭️ AGENT ROUTING: No specialized agent for '{classification_result}' - classification only")
 
